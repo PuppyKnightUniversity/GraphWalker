@@ -1,0 +1,8 @@
+[tool.flake8]
+max-line-length = 200
+ignore = ["*"]
+exclude = ["."]
+
+[tool.pylint.format]
+max-line-length = 200
+

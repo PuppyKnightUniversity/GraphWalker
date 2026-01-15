@@ -1,0 +1,27 @@
+CUDA_VISIBLE_DEVICES=0,1 python main.py \
+    --dataset mimic3_los \
+    --llm_name llama-3.1-8b-instruct \
+    --seed 3407 \
+    --method graph_walker \
+    --icl_examples_num 3 \
+    --max_tokens_each_patient 10000 \
+    --use_vllm \
+    --llm_responses_save_path ./llm_responses/graph_walker_v7_llama3-8b-instruct-mimic3_los-period_length_24-run1_seed34-n_clusters_10-top_l_cohorts_3-top_k_per_cohort_3-add_smart_logits-toy_dataset_size_test_200-add_smart_logits_for_test_example_112 \
+    --toy_dataset \
+    --toy_dataset_size_test 200 \
+    --graph_walker_parallel_batch_size_for_cal_greedy_score 4 \
+    --graph_walker_neighbor_num 8 \
+    --vllm_max_model_len 20480 \
+    --vllm_gpu_memory_utilization 0.85 \
+    --period_length 24 \
+    --embedding_model_name smart \
+    --graph_walker_top_l_cohorts 3 \
+    --graph_walker_top_k_per_cohort 3 \
+    --graph_walker_n_clusters 10 \
+    --graph_walker_add_smart_logits \
+    --graph_walker_add_smart_logits_for_test_example \
+    --graph_walker_mode frontiers-lazy-greedy \
+    --graph_walker_leiden_resolution 0.9 \
+    --graph_walker_add_smart_logits \
+    --graph_walker_add_smart_logits_for_test_example \
+
