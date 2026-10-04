@@ -16,7 +16,7 @@ class Sparsemax(nn.Module):
     def forward(self, input, device='cuda'):
         original_size = input.size()
         input = input.view(-1, input.size(self.dim))
-        
+
         dim = 1
         number_of_logits = input.size(dim)
 
@@ -88,7 +88,7 @@ class Recalibration(nn.Module):
 
         self.nn_c = nn.Linear(channel, channel // reduction)
         scale_dim += channel // reduction
-        
+
         self.nn_rescale = nn.Linear(scale_dim, channel)
         self.sparsemax = Sparsemax(dim=1)
 
@@ -99,7 +99,7 @@ class Recalibration(nn.Module):
         se_c = self.nn_c(y_origin)
         se_c = torch.relu(se_c)
         y = se_c
-        
+
         y = self.nn_rescale(y).view(b, c, 1)
         if self.activation == 'sigmoid':
             y = torch.sigmoid(y)
@@ -113,90 +113,52 @@ class AdaCare(nn.Module):
         self.lab_dim = lab_dim
         self.demo_dim = demo_dim
         self.input_dim = lab_dim + demo_dim
-        
+
         self.hidden_dim = hidden_dim
         self.kernel_size = kernel_size
         self.kernel_num = kernel_num
         self.output_dim = output_dim
         self.dropout = dropout
         self.device = device
-        
+
         self.nn_conv1 = CausalConv1d(self.input_dim, kernel_num, kernel_size, 1, 1)
         self.nn_conv3 = CausalConv1d(self.input_dim, kernel_num, kernel_size, 1, 3)
         self.nn_conv5 = CausalConv1d(self.input_dim, kernel_num, kernel_size, 1, 5)
         torch.nn.init.xavier_uniform_(self.nn_conv1.weight)
         torch.nn.init.xavier_uniform_(self.nn_conv3.weight)
         torch.nn.init.xavier_uniform_(self.nn_conv5.weight)
-            
-        self.nn_convse = Recalibration(3*kernel_num, r_c, use_h=False, use_c=True, activation='sigmoid')  
+
+        self.nn_convse = Recalibration(3*kernel_num, r_c, use_h=False, use_c=True, activation='sigmoid')
         self.nn_inputse = Recalibration(self.input_dim, r_v, use_h=False, use_c=True, activation=activation)
         self.rnn = nn.GRUCell(self.input_dim+3*kernel_num, hidden_dim)
-        # Note: We remove the final output layer here to be consistent with the framework which usually attaches a head separately.
-        # But wait, AdaCare's structure is tightly coupled with its output generation (it doesn't just return embedding).
-        # However, the framework (concare_train.py) expects an embedding and uses a separate head.
-        # Let's check AdaCare's forward. It returns output at each step? No, it returns output sequence.
-        # In concare_train.py: embedding, decov_loss = model(batch['x'], mask=batch['mask'])
-        # preds = head(embedding)
-        # ConCare returns `weighted_contexts` (embedding).
-        # AdaCare forward returns `output` (predictions).
-        
-        # To make it compatible, I should probably return the hidden state `h` or a pooled version of it as embedding.
-        # AdaCare logic:
-        # h = torch.stack(h).permute(1,0,2)
-        # h_reshape = h.contiguous().view(batch_size * time_step, self.hidden_dim)
-        # output = self.nn_output(h_reshape)
-        
-        # If I want to use the framework's head, I should return `h` (the GRU hidden states).
-        # But `ConCare` returns a single embedding vector (weighted context) per patient (or maybe per timestep? No, ConCare seems to return patient embedding).
-        # Let's check ConCare forward again.
-        # ConCare returns `weighted_contexts` [batch, hidden_dim]. It uses attention to pool over time.
-        
-        # AdaCare uses the last hidden state for prediction if it's a sequence classification task?
-        # The original AdaCare code computes output for ALL timesteps (Dense Prediction / Deep Supervision?).
-        # `output = output.contiguous().view(batch_size, time_step, self.output_dim)`
-        # And the loss in original train.py is computed over all timesteps: `loss = batch_y * ...`
-        
-        # However, for mimic3_mortality, we usually want prediction at the end.
-        # The framework's `ConCare` returns `weighted_contexts` which seems to be a single vector.
-        # `preds = head(embedding)` -> `preds` is [batch, output_dim].
-        
-        # So I should return the LAST hidden state of the GRU as the embedding for AdaCare?
-        # Or should I implement the Deep Supervision logic?
-        # The user said "ensure input output ... and various scripts ... metrics".
-        # If I change AdaCare to only predict at the end, I might lose its "Ada" characteristics if they depend on supervision.
-        # But `Recalibration` depends on `conv_res` and `input`. It doesn't seem to depend on previous output.
-        
-        # I will return the LAST hidden state as the embedding.
-        # `h` is list of hidden states. `h[-1]` is the last one.
-        
         self.nn_dropout = nn.Dropout(dropout)
-        
+
         self.relu = nn.ReLU()
         self.sigmoid = nn.Sigmoid()
-        self.tanh = nn.Tanh()        
+        self.tanh = nn.Tanh()
 
     def forward(self, x, static=None, mask=None):
         # x: [batch, time, lab_dim]
         # static: [batch, demo_dim]
-        
+
         if static is not None and self.demo_dim > 0:
             # Expand static to [batch, time, demo_dim]
             static_expanded = static.unsqueeze(1).repeat(1, x.size(1), 1)
             x = torch.cat([x, static_expanded], dim=2)
-        
+
         input = x
         device = input.device
-        
+
         # input shape [batch_size, timestep, feature_dim]
         batch_size = input.size(0)
         time_step = input.size(1)
         feature_dim = input.size(2)
 
-        cur_h = Variable(torch.zeros(batch_size, self.hidden_dim)).to(device)  
+        cur_h = Variable(torch.zeros(batch_size, self.hidden_dim)).to(device)
         inputse_att = []
         convse_att = []
         h = []
-        
+
         conv_input = input.permute(0, 2, 1) # [b, c, t]
         conv_res1 = self.nn_conv1(conv_input)
         conv_res3 = self.nn_conv3(conv_input)
@@ -204,54 +166,41 @@ class AdaCare(nn.Module):
 
         conv_res = torch.cat((conv_res1, conv_res3, conv_res5), dim=1)
         conv_res = self.relu(conv_res)
-        
+
         for cur_time in range(time_step):
             # conv_res is [b, c, t]
             # slice up to cur_time
             convse_res, cur_convatt = self.nn_convse(conv_res[:, :, :cur_time+1], device=device)
             inputse_res, cur_inputatt = self.nn_inputse(input[:, :cur_time+1, :].permute(0, 2, 1), device=device)
             cur_input = torch.cat((convse_res[:, :, -1], inputse_res[:, :, -1]), dim=-1)
-            
+
             cur_h = self.rnn(cur_input, cur_h)
             h.append(cur_h)
             convse_att.append(cur_convatt)
             inputse_att.append(cur_inputatt)
-        
-        # h is list of [batch, hidden_dim]
-        # We return the last hidden state as the embedding
-        # But we need to be careful about padding.
-        # If the sequence is padded, the last valid hidden state is at the actual length.
-        # The framework passes `mask`.
-        
+
+        # Select the final valid GRU state for each patient.
         if mask is not None:
             # mask: [batch, time] or [batch, time, features]
             if mask.dim() == 3:
                 mask = mask[:, :, 0]
-            
-            # We want to gather the hidden state at the last valid timestep.
-            # lengths = mask.sum(dim=1).long() # This assumes mask is 1s then 0s.
-            # But let's just use the gathered h.
-            
+
             h_stacked = torch.stack(h, dim=1) # [batch, time, hidden_dim]
-            
-            # Get lengths
+
+            # The mask must mark a valid prefix followed by padding.
             lengths = mask.sum(dim=1).long()
-            # Index into h_stacked
-            # We need [batch, hidden_dim]
-            
-            # Handle case where length is 0 (should not happen but safe to handle)
+            # Clamp empty sequences to the first state.
             lengths = torch.clamp(lengths, min=1)
-            
+
             # Gather
             # indicies: [batch, 1, hidden_dim]
             indices = (lengths - 1).view(-1, 1).unsqueeze(-1).repeat(1, 1, self.hidden_dim)
             last_h = torch.gather(h_stacked, 1, indices).squeeze(1)
         else:
             last_h = h[-1]
-            
+
         if self.dropout > 0.0:
             last_h = self.nn_dropout(last_h)
-            
-        # ConCare returns: embedding, decov_loss
-        # AdaCare doesn't have decov_loss, return 0
+
+        # Return the patient embedding and zero auxiliary loss.
         return last_h, 0.0

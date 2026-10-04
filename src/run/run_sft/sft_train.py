@@ -10,66 +10,42 @@ import torch
 from args.ehrbase_args import parse_args
 from utils.logger import get_logger
 from data.prepare_ehr_data import prepare_ehr_data
-from prompt.EHR_prompt.prompt_wraper import transform_mimic3_mortality_ehr_to_detail_prompt
-from prompt.EHR_prompt.prompt_template import (
-    USERPROMPT_ZERO_SHOT,
-    RESPONSE_FORMAT_ONLY_ANSWER,
-    TASK_DESCRIPTION,
-)
+from prompt.EHR_prompt.common import build_ehr_prompt, format_icl_label
+from prompt.EHR_prompt.prompt_wraper import transform_ehr_to_detail_prompt
+from llms.prompt_format import format_model_prompt
 
 
-def _build_zero_shot_prompt(example: Dict[str, any]) -> str:
-    X = example["X"]
-    record_times = X[:, 0].astype(float)
-    detail = example["detail"]
-    return USERPROMPT_ZERO_SHOT.format(
-        LENGTH=len(record_times),
-        RECORD_TIME_LIST=', '.join([f"{float(t):.2f}" for t in record_times]),
-        DETAIL=detail,
-        RESPONSE_FORMAT=RESPONSE_FORMAT_ONLY_ANSWER['mimic3_mortality'],
-        TASK_DESCRIPTION=TASK_DESCRIPTION['mimic3_mortality'],
-        EXAMPLE='',
-    )
+def _build_zero_shot_prompt(example: Dict[str, any], dataset='mimic3_mortality') -> str:
+    return build_ehr_prompt(example, dataset)
 
 
 class SFTDataset(torch.utils.data.Dataset):
-    def __init__(self, data_split: Dict[str, List], tokenizer, max_length: int):
+    def __init__(self, data_split: Dict[str, List], tokenizer, max_length: int, args=None):
         self.data_split = data_split
         self.tokenizer = tokenizer
         self.max_length = max_length
+        from types import SimpleNamespace
+        self.args = args or SimpleNamespace(dataset='mimic3_mortality', vllm_apply_chat_template=False)
+        self.dataset = self.args.dataset
 
     def __len__(self):
         return len(self.data_split['X'])
 
     def __getitem__(self, idx):
-        example = {
-            'X': self.data_split['X'][idx],
-            'detail': self.data_split['detail'][idx],
-        }
-        prompt_text = _build_zero_shot_prompt(example)
-        target_text = f"{int(self.data_split['y'][idx])}.0"
-
-        prompt_ids = self.tokenizer(
-            prompt_text,
-            add_special_tokens=True,
-            truncation=True,
-            max_length=self.max_length,
-        )
-        target_ids = self.tokenizer(
-            target_text,
-            add_special_tokens=False,
-            truncation=True,
-            max_length=min(16, self.max_length),
-        )
-
-        input_ids = prompt_ids['input_ids'] + target_ids['input_ids']
-        input_ids = input_ids[: self.max_length]
+        example = {key: values[idx] for key, values in self.data_split.items()}
+        prompt_text = _build_zero_shot_prompt(example, self.dataset)
+        prompt_text = format_model_prompt(self.args, self.tokenizer, prompt_text,
+                                         enable_thinking=False)
+        target_text = format_icl_label(self.data_split['y'][idx], self.dataset)
+        prompt_ids = self.tokenizer(prompt_text, add_special_tokens=False)['input_ids']
+        target_ids = self.tokenizer(target_text, add_special_tokens=False)['input_ids']
+        if self.tokenizer.eos_token_id is not None:
+            target_ids.append(self.tokenizer.eos_token_id)
+        if not target_ids or len(prompt_ids) + len(target_ids) > self.max_length:
+            raise ValueError('SFT example exceeds max_length or has no answer tokens')
+        input_ids = prompt_ids + target_ids
         attention_mask = [1] * len(input_ids)
-
-        labels = input_ids.copy()
-        prompt_len = min(len(prompt_ids['input_ids']), len(labels))
-        for i in range(prompt_len):
-            labels[i] = -100
+        labels = [-100] * len(prompt_ids) + target_ids
 
         return {
             'input_ids': torch.tensor(input_ids, dtype=torch.long),
@@ -79,28 +55,7 @@ class SFTDataset(torch.utils.data.Dataset):
 
 
 def _ensure_detail_fields(args, logger, train_data, val_data, test_data):
-    for split_name, dataset in zip(['train', 'val', 'test'], [train_data, val_data, test_data]):
-        if 'detail' not in dataset:
-            detail_all = []
-            for i in range(len(dataset['X'])):
-                patient_example = {
-                    'X': dataset['X'][i],
-                    't': dataset['t'][i],
-                    'y': dataset['y'][i],
-                    'header': dataset['header'][i],
-                    'name': dataset['name'][i],
-                }
-                detail = transform_mimic3_mortality_ehr_to_detail_prompt(
-                    patient_example,
-                    unit=args.unit,
-                    reference_range=args.reference_range,
-                    smooth_hourly_data=True,
-                    keep_last=True,
-                )
-                detail_all.append(detail)
-            dataset['detail'] = detail_all
-
-    return train_data, val_data, test_data
+    return transform_ehr_to_detail_prompt(args, train_data, val_data, test_data)
 
 
 def main():
@@ -180,8 +135,8 @@ def main():
         )
         model = get_peft_model(model, lora_config)
 
-    train_dataset = SFTDataset(train_data, tokenizer, max_length=args.sft_max_seq_length)
-    eval_dataset = SFTDataset(val_data, tokenizer, max_length=args.sft_max_seq_length)
+    train_dataset = SFTDataset(train_data, tokenizer, max_length=args.sft_max_seq_length, args=args)
+    eval_dataset = SFTDataset(val_data, tokenizer, max_length=args.sft_max_seq_length, args=args)
 
     os.makedirs(args.sft_output_dir, exist_ok=True)
 

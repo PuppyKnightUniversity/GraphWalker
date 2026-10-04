@@ -1,4 +1,3 @@
-import pickle
 from utils.logger import get_logger
 
 def run_llm_inference_for_ICL(args, train_dataset, val_dataset, test_dataset, logger=None):
@@ -21,7 +20,7 @@ def run_llm_inference_for_ICL(args, train_dataset, val_dataset, test_dataset, lo
                                                                                      train_dataset, 
                                                                                      val_dataset, 
                                                                                      test_dataset, 
-                                                                                     is_few_shot=is_few_shot,  # NOTE: for random few-shot method, we use few-shot learning
+                                                                                     is_few_shot=is_few_shot,
                                                                                      max_tokens= args.max_tokens_each_patient)
     
     # 2. llm inference
@@ -36,17 +35,18 @@ def run_llm_inference_for_ICL(args, train_dataset, val_dataset, test_dataset, lo
     if getattr(args, 'final_delta_H', False):
         from utils.conditional_entropy import compute_average_conditional_entropy
         ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS = test_dataset.get('ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS', None)
-        avg_conditional_entropy = compute_average_conditional_entropy(
+        entropy_metrics = compute_average_conditional_entropy(
             args,
             train_dataset,
             test_dataset,
             ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS=ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS,
+            return_metrics=True,
             logger=logger
         )
-        logger.info(f"Average conditional entropy (delta_H) on test set: {avg_conditional_entropy:.4f}")
+        logger.info(f"Test entropy metrics: {entropy_metrics}")
         # Add to metrics if needed
         if isinstance(bootstrap_metrics, dict):
-            bootstrap_metrics['avg_conditional_entropy'] = avg_conditional_entropy
+            bootstrap_metrics.update(entropy_metrics)
     
     return bootstrap_metrics
 

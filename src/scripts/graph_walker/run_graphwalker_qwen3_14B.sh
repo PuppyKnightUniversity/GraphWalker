@@ -1,20 +1,26 @@
-CUDA_VISIBLE_DEVICES=0,1 python main.py \
-    --dataset mimic4_readmission \
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+: "${SMART_CHECKPOINT:?Set SMART_CHECKPOINT to the pretrained SMART encoder checkpoint}"
+
+CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}" python main.py \
+    --dataset "${DATASET:-mimic4_readmission}" \
     --llm_name qwen3-14b-instruct \
-    --seed 3407 \
+    --seed "${SEED:-3407}" \
+    --data_split_seed 3407 \
     --method graph_walker \
     --icl_examples_num 3 \
     --max_tokens_each_patient 10000 \
     --use_vllm \
-    --llm_responses_save_path ./llm_responses/graph_walker_qwen3-14b-instruct-mimic4_readmission-period_length_24-graph_walker_neighbor_num_4-top_l_cohorts_2-top_k_per_cohort_3-n_clusters_10-run1 \
-    --toy_dataset \
     --graph_walker_parallel_batch_size_for_cal_greedy_score 1 \
-    --graph_walker_neighbor_num 4 \
+    --graph_walker_neighbor_num 8 \
     --vllm_max_model_len 20480 \
     --vllm_gpu_memory_utilization 0.85 \
     --period_length 24 \
     --embedding_model_name smart \
-    --graph_walker_top_l_cohorts 2 \
+    --embedding_model_path "$SMART_CHECKPOINT" \
+    --graph_walker_top_l_cohorts 3 \
     --graph_walker_top_k_per_cohort 3 \
-    --graph_walker_n_clusters 10 \
-
+    --graph_walker_leiden_resolution 1.0 \
+    --metrics_save_path "../results/${DATASET:-mimic4_readmission}/qwen3-14b/seed-${SEED:-3407}.json" \
+    "$@"

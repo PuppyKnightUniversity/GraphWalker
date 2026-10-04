@@ -1,89 +1,54 @@
-import os
 from args.ehrbase_args import parse_args
 from utils.logger import get_logger
 from data.prepare_ehr_data import prepare_ehr_data
-from prompt.EHR_prompt.prompt_wraper import (
-    transform_mimic3_mortality_ehr_to_detail_prompt,
-    mimic3_mortality_prompt_wrapper,
-)
+from prompt.EHR_prompt.common import serialize_patient_record, build_ehr_prompt
+from prompt.EHR_prompt.prompt_wraper import validate_detail_prompt_lengths
 from utils.llm_eval import llm_response_evaluation
 from llms.vllm_inference import inference as vllm_generate
 
 
 def _ensure_detail(args, dataset):
-    detail_all = []
-    for i in range(len(dataset['X'])):
-        patient_example = {
-            'X': dataset['X'][i],
-            't': dataset['t'][i],
-            'y': dataset['y'][i],
-            'header': dataset['header'][i],
-            'name': dataset['name'][i],
-        }
-        detail = transform_mimic3_mortality_ehr_to_detail_prompt(
-            patient_example,
-            unit=args.unit,
-            reference_range=args.reference_range,
-            smooth_hourly_data=True,
-            keep_last=True,
-        )
-        detail_all.append(detail)
-    dataset['detail'] = detail_all
+    dataset['detail'] = [
+        serialize_patient_record({k: values[i] for k, values in dataset.items()},
+                                 args.dataset, unit=args.unit, reference_range=args.reference_range)
+        for i in range(len(dataset['X']))]
     return dataset
 
 
 def _build_prompts(args, test_dataset):
-    prompts = []
-    for i in range(len(test_dataset['X'])):
-        patient_example = {k: test_dataset[k][i] for k in test_dataset.keys()}
-        prompt = mimic3_mortality_prompt_wrapper(
-            patient_example,
-            is_few_shot=False,
-            icl_examples_list=[],
-            inference_type=args.inference_type,
-            unit=args.unit,
-            reference_range=args.reference_range,
-            add_smart_logits=False,
-            add_smart_logits_for_test_example=False,
-        )
-        prompts.append(prompt)
-    return prompts
+    return [build_ehr_prompt({k: values[i] for k, values in test_dataset.items()},
+                             args.dataset, inference_type=args.inference_type)
+            for i in range(len(test_dataset['X']))]
 
 
 def run(args, train_dataset, val_dataset, test_dataset, logger):
     test_dataset = _ensure_detail(args, test_dataset)
+    validate_detail_prompt_lengths(logger, test_dataset,
+                                   max_tokens=getattr(args, 'max_tokens_each_patient', 10000))
     prompts = _build_prompts(args, test_dataset)
-    try:
-        import tiktoken
-        enc = tiktoken.get_encoding("cl100k_base")
-        def count_tokens(s: str):
-            return len(enc.encode(s))
-    except Exception:
-        def count_tokens(s: str):
-            return len(s.split())
-    max_allowed = getattr(args, "max_tokens_each_patient", 10000)
-    valid_indices = [i for i, p in enumerate(prompts) if count_tokens(p) <= max_allowed]
-    if len(valid_indices) < len(prompts):
-        logger.info(f"Filtered {len(prompts) - len(valid_indices)} overlength prompts ({len(valid_indices)}/{len(prompts)})")
-        prompts = [prompts[i] for i in valid_indices]
-        for k in list(test_dataset.keys()):
-            if isinstance(test_dataset[k], list):
-                test_dataset[k] = [test_dataset[k][i] for i in valid_indices]
     model_path = args.llm_local_path if args.llm_local_path is not None else args.llm_name
     adapter_path = args.llm_adapter_path or args.sft_output_dir
-    responses = vllm_generate(
+    is_los = args.dataset.endswith('_los')
+    responses, scores = vllm_generate(
+        args=args,
         model_path=model_path,
         prompt_list=prompts,
         adapter_path=adapter_path,
-        max_tokens=getattr(args, 'delta_max_tokens', 256),
-        temperature=getattr(args, 'delta_temperature', 0.0),
-        vllm_batch_size=getattr(args, 'delta_vllm_batch_size', 2),
+        max_tokens=256,
+        temperature=0.0,
+        max_model_len=getattr(args, 'vllm_max_model_len', 16384),
+        gpu_memory_utilization=getattr(args, 'vllm_gpu_memory_utilization', 0.85),
+        vllm_batch_size=getattr(args, 'vllm_batch_size', 4),
         save_path=args.llm_responses_save_path,
         labels=[int(y) for y in test_dataset['y']],
+        return_logits=is_los,
+        classification_options=list('ABCD') if is_los else None,
+        enable_thinking=False,
         logger=logger,
     )
-    metrics = llm_response_evaluation(args, responses, test_dataset, logger)
+    metrics = llm_response_evaluation(args, responses, scores, test_dataset, logger)
     logger.log_metrics(metrics, "SFT LoRA vLLM Evaluation Results")
+    return metrics
 
 
 def main():
@@ -108,7 +73,7 @@ def main():
         test_data = _ensure_detail(args, test_data)
         prompts = _build_prompts(args, test_data)
         responses = ["0.12", "0.85"]
-        llm_response_evaluation(args, responses, test_data, logger)
+        llm_response_evaluation(args, responses, None, test_data, logger)
         return
     train_data, val_data, test_data = prepare_ehr_data(args, logger)
     run(args, train_data, val_data, test_data, logger)

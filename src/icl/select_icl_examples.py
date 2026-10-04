@@ -20,7 +20,7 @@ def FIND_ICL_EXAMPLES(args,
     '''
     # select the few-shot examples in the train dataset
     if method != 'graph_walker':
-        raise ValueError(f'we have not implemented the ICL method for {method}')
+        raise ValueError(f'Unsupported ICL method: {method}')
     
     from icl.method.graph_walker import select_graph_walker_examples
     ICL_EXAMPLES_LIST = select_graph_walker_examples(args, test_dataset, train_dataset, num_examples)

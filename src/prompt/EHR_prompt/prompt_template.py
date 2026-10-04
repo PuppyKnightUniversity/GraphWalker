@@ -1,124 +1,85 @@
-SYSTEMPROMPT = {
-    'mimic3_mortality': 'You are an experienced critical care physician working in an Intensive Care Unit (ICU), skilled in interpreting complex longitudinal patient data and predicting clinical outcomes.',
-    'mimic3_los': 'You are an experienced critical care physician working in an Intensive Care Unit (ICU), skilled in interpreting complex longitudinal patient data and predicting clinical outcomes.',
-    'mimic4_readmission': 'You are an experienced critical care physician working in an Intensive Care Unit (ICU), skilled in interpreting complex longitudinal patient data and predicting clinical outcomes.',
-}
+"""Task instructions and shared historical-EHR prompt templates."""
+from pathlib import Path
 
+
+_MORTALITY_TASK = ("You are tasked with predicting whether the patient will die during the target visit, "
+                   "using EHR records from preceding visits. The target visit is the patient's final visit, "
+                   "and its records are excluded from the input.")
+_LOS_TASK = ("You are tasked with predicting the patient's total hospital length of stay during the target "
+             "visit, using EHR records from preceding visits. The target visit is the patient's final visit, "
+             "and its records are excluded from the input.")
 TASK_DESCRIPTION = {
-    'mimic3_mortality': 'Your primary task is to assess the provided medical data and analyze the health records from ICU visits to determine the likelihood of the patient not surviving their hospital stay.',
-    'tjh_mortality': 'Your primary task is to assess the provided medical data and analyze the health records from ICU visits to determine the likelihood of the patient not surviving their hospital stay.',
-    'mimic3_los': 'Your primary task is to analyze the medical data to predict the length of stay (LOS) in the hospital. The LOS is defined as the number of days from admission to discharge, including any days spent in the ICU. You need to classify the predicted LOS into one of 4 categories based on the number of days.',
-    "mimic4_readmission": "Your primary task is to analyze the medical data to predict the probability of readmission within 30 days post-discharge. Include cases where a patient passes away within 30 days from the discharge date as readmissions.",
+    **{f'{dataset}_mortality': _MORTALITY_TASK for dataset in ('mimic3', 'mimic4', 'tjh')},
+    **{f'{dataset}_los': _LOS_TASK for dataset in ('mimic3', 'mimic4', 'tjh')},
+    'mimic4_readmission': (
+        'You are tasked with predicting whether the patient will be readmitted to the ICU within 30 days '
+        'after discharge from the target ICU stay, using EHR records from preceding visits. The target '
+        "visit is the patient's final visit, and its records are excluded from the input."),
 }
 
-# answer straightly without any thinking
-RESPONSE_FORMAT_ONLY_ANSWER = {
-    'mimic3_mortality': '''\
-Provide only a floating-point number between 0 and 1 representing the predicted probability of mortality (higher value means higher likelihood of death).
-
-Do not provide any reasoning, explanation, or additional text. Only output the numerical value.
-
-Example: 0.XX''',
-
-    'tjh_mortality': '''\
-Provide only a floating-point number between 0 and 1 representing the predicted probability of mortality (higher value means higher likelihood of death).
-
-Do not provide any reasoning, explanation, or additional text. Only output the numerical value.
-
-Example: 0.XX''',
-
-    'mimic4_readmission': '''\
-Provide only a floating-point number between 0 and 1 representing the predicted probability of 30-day readmission after discharge (including cases where the patient dies within 30 days as readmission).
-
-Do not provide any reasoning, explanation, or additional text. Only output the numerical value.
-
-Example: 0.XX''',
-
-    'mimic3_los': '''\
-Provide only a single letter (A, B, C, or D) representing the predicted length of stay category:
+_MORTALITY_RESPONSE = '''\
+Provide only a floating-point number between 0 and 1 representing the predicted probability of in-hospital mortality during the target visit. A higher value indicates a higher probability of death.
+Do not provide any reasoning, explanation, or additional text. Output only the numerical value.
+Example: 0.XX'''
+_LOS_RESPONSE = '''\
+Provide only a single letter (A, B, C, or D) representing the predicted length-of-stay category:
 - A: Less than 3 days (< 3 days)
-- B: 3 to 7 days (3-7 days)
-- C: 7 to 14 days (7-14 days)
+- B: 3 to 7 days (3 <= days <= 7)
+- C: More than 7 and up to 14 days (7 < days <= 14)
 - D: More than 14 days (> 14 days)
-
-Do not provide any reasoning, explanation, or additional text. Only output the letter (A, B, C, or D).
-Example: A''',
+Do not provide any reasoning, explanation, or additional text. Output only the letter (A, B, C, or D).
+Example: B'''
+RESPONSE_FORMAT_ONLY_ANSWER = {
+    **{f'{dataset}_mortality': _MORTALITY_RESPONSE for dataset in ('mimic3', 'mimic4', 'tjh')},
+    **{f'{dataset}_los': _LOS_RESPONSE for dataset in ('mimic3', 'mimic4', 'tjh')},
+    'mimic4_readmission': '''\
+Provide only a floating-point number between 0 and 1 representing the predicted probability of a new ICU admission within this 30-day window.
+Do not provide any reasoning, explanation, or additional text. Output only the numerical value.
+Example: 0.XX''',
 }
 
-UNIT = {
-    'mimic3_mortality': './prompt/mimic3_unit.json',
-    'mimic3_los': './prompt/mimic3_unit.json',
-    
-}
+_RESOURCE_DIR = Path(__file__).resolve().parent
+UNIT = {name: str(_RESOURCE_DIR / 'mimic3_unit.json')
+        for name in ('mimic3_mortality', 'mimic3_los')}
+REFERENCE_RANGE = {name: str(_RESOURCE_DIR / 'mimic3_range.json')
+                   for name in ('mimic3_mortality', 'mimic3_los')}
 
-REFERENCE_RANGE = {
-    'mimic3_mortality': './prompt/mimic3_range.json',
-    'mimic3_los': './prompt/mimic3_range.json',
-}
+_HISTORY_INTRO = '''\
+You will be provided with longitudinal electronic health record (EHR) data from a patient's visits preceding the final visit. We refer to the final visit as the target visit. Records from the target visit and its outcome are not provided.
+Each clinical feature is represented as a time-ordered sequence of measurements from the preceding visits. Missing values are denoted as NaN. Units and reference ranges are provided where applicable.
+'''
+USERPROMPT_ZERO_SHOT = _HISTORY_INTRO + '''\
+Use the provided historical records to predict the specified outcome associated with the target visit.
 
-# zero-shot user prompt template
-USERPROMPT_ZERO_SHOT = """\
-I will provide you with longitudinal medical information for a patient. Each clinical feature is presented as a list of values, corresponding to these visits. Missing values are represented as `NaN`. Note that units and reference ranges are provided alongside relevant features.
-
-PATIENT INFORMATION:
-- Number of measurements: {LENGTH}
-- Measurement times (hours from admission): [{RECORD_TIME_LIST}]
-
-Your Task:
+Task Description:
 {TASK_DESCRIPTION}
 
 Instructions & Output Format:
 {RESPONSE_FORMAT}
 
-{EXAMPLE}
+Target Patient's Historical Records:
+{TARGET_RECORD}
 
-Now, please analyze and predict for the following patient:
+Your Answer:'''
 
-Clinical Features Over Time:
-{DETAIL}"""
+USERPROMPT_FEW_SHOT = _HISTORY_INTRO + '''\
+You will also receive selected examples from other patients. Each example contains that patient's historical records preceding their own target visit, together with the known outcome associated with that visit. Use these examples and the target patient's historical records to predict the specified outcome for the target patient.
 
-# FIXME: add few-shot ICL prompt template!
-USERPROMPT_FEW_SHOT = """\
-I will provide you with longitudinal medical information for a patient. Each clinical feature is presented as a list of values, corresponding to these visits. Missing values are represented as `NaN`. Note that units and reference ranges are provided alongside relevant features.
-
-PATIENT INFORMATION:
-- Number of measurements: {LENGTH}
-- Measurement times (hours from admission): [{RECORD_TIME_LIST}]
-
-Your Task:
+Task Description:
 {TASK_DESCRIPTION}
 
 Instructions & Output Format:
 {RESPONSE_FORMAT}
 
-Here are some examples of patient data and their corresponding labels(1 means not surviving, 0 means surviving). You can use these examples to help you make your prediction.
-
+Selected Patient Examples:
 {EXAMPLE}
 
-Now, please analyze and predict for the following patient:
+Target Patient's Historical Records:
+{TARGET_RECORD}
 
-Clinical Features Over Time:
-{DETAIL}"""
+Your Answer:'''
 
-# Few-shot ICL prompt template with SMART model logits
-USERPROMPT_FEW_SHOT_SMART_WITH_LOGITS = """\
-I will provide you with longitudinal medical information for a patient. Each clinical feature is presented as a list of values, corresponding to these visits. Missing values are represented as `NaN`. Note that units and reference ranges are provided alongside relevant features.
-
-PATIENT INFORMATION:
-- Number of measurements: {LENGTH}
-- Measurement times (hours from admission): [{RECORD_TIME_LIST}]
-
-Your Task:
-{TASK_DESCRIPTION}
-
-Instructions & Output Format:
-{RESPONSE_FORMAT}
-
-Here are some examples of patient data and their corresponding labels(1 means not surviving, 0 means surviving). For each example, we also provide the results from an expert EHR analysis model  for your reference(0.XX means the probability of not surviving,higher value means higher likelihood of death). You can use these examples and the expert model's outputs to help you make your prediction.
-
-{EXAMPLE}
-
-Now, please analyze and predict for the following patient. **Important**: The expert model's outputs are provided only as reference values to assist your analysis. Do NOT simply copy or directly adopt these values. You should conduct your own independent analysis based on the clinical features, and make necessary corrections or adjustments to the expert model's outputs when appropriate.
-
-Clinical Features Over Time:
-{DETAIL}"""
+USERPROMPT_FEW_SHOT_SMART_WITH_LOGITS = USERPROMPT_FEW_SHOT.replace(
+    'Selected Patient Examples:',
+    'Expert model probabilities are provided as auxiliary estimates for the specified outcome.\n\n'
+    'Selected Patient Examples:')

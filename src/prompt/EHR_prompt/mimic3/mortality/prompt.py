@@ -81,7 +81,7 @@ def transform_mimic3_mortality_ehr_to_detail_prompt(patient_example: Dict[str, A
         for i, feature in enumerate(features):
             feature_values[feature] = []
             for visit_idx in range(patient_data.shape[0]):
-                if mask[visit_idx, i] == 1:
+                if mask[visit_idx, i] == 1 or not np.isfinite(patient_data[visit_idx, i]):
                     feature_values[feature].append('NaN')
                 else:
                     value = patient_data[visit_idx, i]
@@ -105,9 +105,9 @@ def transform_mimic3_mortality_ehr_to_detail_prompt(patient_example: Dict[str, A
             if unit or reference_range:
                 unit_range = ' ('
                 if unit:
-                    unit_range += f'{unit_values[feature]} '
+                    unit_range += f'{unit_values.get(feature, "/")} '
                 if reference_range:
-                    unit_range += range_values[feature]
+                    unit_range += range_values.get(feature, '/')
                 unit_range = unit_range.rstrip() + ')'
             detail += f"- {feature}{unit_range}: [{', '.join(feature_values[feature])}]\n"
         
@@ -119,7 +119,7 @@ def transform_mimic3_mortality_ehr_to_detail_prompt(patient_example: Dict[str, A
         Extract the leading number from the string
         '''
         s = str(s)
-        match = re.match(r'^\s*(-?\d+\.?\d*)', s)
+        match = re.match(r'^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)', s)
         if match:
             return match.group(1) 
         return np.nan 
@@ -157,113 +157,20 @@ def transform_mimic3_mortality_ehr_to_detail_prompt(patient_example: Dict[str, A
 
 def mimic3_mortality_prompt_wrapper(patient_example: Dict[str, Any],
                                     is_few_shot: bool = False,
-                                    icl_examples_list: List[Dict[str, Any]] = [],
+                                    icl_examples_list=None,
                                     inference_type: str = 'only_answer',
                                     unit: bool = False,
                                     reference_range: bool = False,
-                                    smooth_hourly_data: bool = True,
+                                    smooth_hourly_data: bool = False,
                                     keep_last: bool = True,
                                     add_smart_logits: bool = False,
-                                    add_smart_logits_for_test_example: bool = True) -> str:
-    '''
-    Wrap the ehr data into prompt template for mimic3 mortality data
-    
-    Args:
-        patient_example: Dict[str, Any] 
-            The ehr data of a patient
-        is_few_shot: bool
-            Whether to use few-shot ICL 
-        inference_type: str
-            The type of inference
-        icl_examples_list: List[str]
-            The list of few-shot examples
-        unit: bool
-            Whether to include unit in the detail
-        reference_range: bool
-            Whether to include reference range in the detail
-        smooth_hourly_data: bool
-            Whether to smooth the hourly data
-        keep_last: bool
-            Whether to keep the last data point of each hour
-    Returns:
-        prompt: str
-            The prompt contains patient ehr data
-    '''
-
-    # detail EHR prompt for one patient
-    detail = patient_example['detail']
+                                    add_smart_logits_for_test_example: bool = False) -> str:
+    from prompt.EHR_prompt.common import build_ehr_prompt
     if smooth_hourly_data:
-        from prompt.EHR_prompt.mimic3.utils import mimic3_smooth_hourly_data
-        patient_example = mimic3_smooth_hourly_data(patient_example, keep_last=keep_last)
-    # load template
-    if is_few_shot:
-        if add_smart_logits:
-            from prompt.EHR_prompt.prompt_template import USERPROMPT_FEW_SHOT_SMART_WITH_LOGITS as PROMPT_TEMPLATE
-        else:
-            from prompt.EHR_prompt.prompt_template import USERPROMPT_FEW_SHOT as PROMPT_TEMPLATE
-    else:
-        # zero-shot ICL
-        from prompt.EHR_prompt.prompt_template import USERPROMPT_ZERO_SHOT as PROMPT_TEMPLATE
-    
-    from prompt.EHR_prompt.prompt_template import TASK_DESCRIPTION
-    
-    # load response format
-    if inference_type == 'only_answer':
-        from prompt.EHR_prompt.prompt_template import RESPONSE_FORMAT_ONLY_ANSWER as RESPONSE_FORMAT
-    else:
-        raise ValueError(f'we have not implemented the inference type for {inference_type}')
-
-    # load few-shot examples
-    if is_few_shot:
-        # Each example contains the EHR detail and a binary prediction label (0/1)
-        if add_smart_logits:
-            def convert_logits_to_risk_value(smart_logits):
-                '''
-                Convert 2D logits array to risk value (probability of positive class)
-                Args:
-                    smart_logits: torch.Tensor or np.ndarray of shape [2]
-                Returns:
-                    risk_value: float, probability of positive class (class 1)
-                '''
-                # Convert to numpy if it's a torch tensor
-                if isinstance(smart_logits, torch.Tensor):
-                    logits_np = smart_logits.cpu().numpy()
-                else:
-                    logits_np = np.array(smart_logits)
-                
-                # Apply softmax to convert logits to probabilities
-                exp_logits = np.exp(logits_np - np.max(logits_np))  # numerical stability
-                probs = exp_logits / np.sum(exp_logits)
-                
-                # Return probability of positive class (index 1)
-                return float(probs[1])
-            
-            example = '\n\n'.join([
-                f"Example {i+1}:\n{icl_example['detail']}\nExpert Model Outputs:  {convert_logits_to_risk_value(icl_example['smart_logits']):.4f}\nLabel: {icl_example['label']}"
-                for i, icl_example in enumerate(icl_examples_list)
-            ])
-        else:
-            example = '\n\n'.join([
-                f"Example {i+1}:\n{icl_example['detail']}\nLabel: {icl_example['label']}"
-                for i, icl_example in enumerate(icl_examples_list)
-            ])
-    else:
-        example = ''
-        
-    X = patient_example['X']
-    record_times = X[:, 0].astype(float)
-
-    prompt = PROMPT_TEMPLATE.format(
-        LENGTH=len(record_times),
-        RECORD_TIME_LIST=', '.join([f"{float(t):.2f}" for t in record_times]),
-        DETAIL=detail,
-        RESPONSE_FORMAT=RESPONSE_FORMAT['mimic3_mortality'],
-        TASK_DESCRIPTION=TASK_DESCRIPTION['mimic3_mortality'],
-        EXAMPLE=example,)
-    
-
-    # For ablation study, whether to add SMART model logits to the test example
-    if add_smart_logits_for_test_example:
-        prompt += f"\nExpert Model Outputs:  {convert_logits_to_risk_value(patient_example['smart_logits']):.4f}"
-
-    return prompt
+        raise ValueError('Apply temporal aggregation before EHR serialization')
+    return build_ehr_prompt(
+        patient_example, 'mimic3_mortality', icl_examples_list,
+        is_few_shot=is_few_shot, inference_type=inference_type,
+        unit=unit, reference_range=reference_range,
+        add_smart_logits=add_smart_logits,
+        add_smart_logits_for_test_example=add_smart_logits_for_test_example)

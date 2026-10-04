@@ -1,7 +1,7 @@
 import subprocess
-import random
 import os
 import sys
+from pathlib import Path
 
 def _infer_nproc_from_env():
     devices = os.environ.get("CUDA_VISIBLE_DEVICES")
@@ -38,6 +38,11 @@ def run(args, train_dataset, val_dataset, test_dataset, logger):
             if value is not None:
                 cmd.extend([f"--{name}", str(value)])
 
+    for name in ('ehr_protocol', 'ehr_records_path', 'dataset_path', 'mid_data_dump_path',
+                 'data_split_seed', 'train_ratio', 'period_length'):
+        add_flag(name, getattr(args, name, None))
+    add_flag('unit', getattr(args, 'unit', False), is_bool=True)
+    add_flag('reference_range', getattr(args, 'reference_range', False), is_bool=True)
     add_flag("llm_name", getattr(args, "llm_name", None))
     add_flag("llm_local_path", getattr(args, "llm_local_path", None))
     add_flag("sft_epochs", getattr(args, "sft_epochs", None))
@@ -48,20 +53,23 @@ def run(args, train_dataset, val_dataset, test_dataset, logger):
     add_flag("sft_fp16", getattr(args, "sft_fp16", False), is_bool=True)
     add_flag("sft_max_seq_length", getattr(args, "sft_max_seq_length", None))
     add_flag("sft_output_dir", getattr(args, "sft_output_dir", None))
-    add_flag("sft_use_lora", getattr(args, "sft_use_lora", False), is_bool=True)
+    cmd.append('--sft_use_lora' if getattr(args, 'sft_use_lora', True) else '--no-sft_use_lora')
     add_flag("sft_lora_r", getattr(args, "sft_lora_r", None))
     add_flag("sft_lora_alpha", getattr(args, "sft_lora_alpha", None))
     add_flag("sft_lora_dropout", getattr(args, "sft_lora_dropout", None))
     add_flag("sft_lora_target_modules", getattr(args, "sft_lora_target_modules", None))
     add_flag("toy_dataset", getattr(args, "toy_dataset", False), is_bool=True)
+    for name in ('toy_dataset_size_train', 'toy_dataset_size_val', 'toy_dataset_size_test'):
+        add_flag(name, getattr(args, name, None))
+    add_flag('sft_dry_run', getattr(args, 'sft_dry_run', False), is_bool=True)
     add_flag("dist_main_port", getattr(args, "dist_main_port", None))
     add_flag("sft_gradient_checkpointing", getattr(args, "sft_gradient_checkpointing", True), is_bool=True)
     add_flag("sft_deepspeed_zero3", getattr(args, "sft_deepspeed_zero3", True), is_bool=True)
     add_flag("sft_zero3_cpu_offload", getattr(args, "sft_zero3_cpu_offload", False), is_bool=True)
 
     env = os.environ.copy()
-    src_path = os.path.join(os.getcwd(), "src")
-    env["PYTHONPATH"] = src_path + ":" + env.get("PYTHONPATH", "")
+    src_path = str(Path(__file__).resolve().parents[2])
+    env["PYTHONPATH"] = src_path + os.pathsep + env.get("PYTHONPATH", "")
     env.setdefault("TRANSFORMERS_NO_TF", "1")
     env.setdefault("TF_USE_LEGACY_KERAS", "1")
     env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -79,7 +87,7 @@ def run(args, train_dataset, val_dataset, test_dataset, logger):
             text=True,
         )
         logger.info("SFT training completed successfully!\n")
-        return result
+        return {'returncode': result.returncode, 'output_dir': args.sft_output_dir}
     except subprocess.CalledProcessError as e:
         logger.error(f"Error occurred during SFT training: {e}")
         logger.error(f"Return code: {e.returncode}")

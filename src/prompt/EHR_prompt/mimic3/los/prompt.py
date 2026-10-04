@@ -81,7 +81,7 @@ def transform_mimic3_los_ehr_to_detail_prompt(patient_example: Dict[str, Any],
         for i, feature in enumerate(features):
             feature_values[feature] = []
             for visit_idx in range(patient_data.shape[0]):
-                if mask[visit_idx, i] == 1:
+                if mask[visit_idx, i] == 1 or not np.isfinite(patient_data[visit_idx, i]):
                     feature_values[feature].append('NaN')
                 else:
                     value = patient_data[visit_idx, i]
@@ -105,9 +105,9 @@ def transform_mimic3_los_ehr_to_detail_prompt(patient_example: Dict[str, Any],
             if unit or reference_range:
                 unit_range = ' ('
                 if unit:
-                    unit_range += f'{unit_values[feature]} '
+                    unit_range += f'{unit_values.get(feature, "/")} '
                 if reference_range:
-                    unit_range += range_values[feature]
+                    unit_range += range_values.get(feature, '/')
                 unit_range = unit_range.rstrip() + ')'
             detail += f"- {feature}{unit_range}: [{', '.join(feature_values[feature])}]\n"
         
@@ -119,7 +119,7 @@ def transform_mimic3_los_ehr_to_detail_prompt(patient_example: Dict[str, Any],
         Extract the leading number from the string
         '''
         s = str(s)
-        match = re.match(r'^\s*(-?\d+\.?\d*)', s)
+        match = re.match(r'^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)', s)
         if match:
             return match.group(1) 
         return np.nan 
@@ -156,139 +156,20 @@ def transform_mimic3_los_ehr_to_detail_prompt(patient_example: Dict[str, Any],
 
 def mimic3_los_prompt_wrapper(patient_example: Dict[str, Any],
                                     is_few_shot: bool = False,
-                                    icl_examples_list: List[Dict[str, Any]] = [],
+                                    icl_examples_list=None,
                                     inference_type: str = 'only_answer',
                                     unit: bool = False,
                                     reference_range: bool = False,
                                     smooth_hourly_data: bool = False,
                                     keep_last: bool = True,
                                     add_smart_logits: bool = False,
-                                    add_smart_logits_for_test_example: bool = True) -> str:
-    '''
-    Wrap the ehr data into prompt template for mimic3 los data
-    
-    Args:
-        patient_example: Dict[str, Any] 
-            The ehr data of a patient
-        is_few_shot: bool
-            Whether to use few-shot ICL 
-        inference_type: str
-            The type of inference
-        icl_examples_list: List[str]
-            The list of few-shot examples
-        unit: bool
-            Whether to include unit in the detail
-        reference_range: bool
-            Whether to include reference range in the detail
-        smooth_hourly_data: bool
-            Whether to smooth the hourly data
-        keep_last: bool
-            Whether to keep the last data point of each hour
-    Returns:
-        prompt: str
-            The prompt contains patient ehr data
-    '''
-    def label_to_letter(label):
-        '''
-        convert number label to letter label: 0->A, 1->B, 2->C, 3->D
-        Args:
-            label: int or float
-        Returns:
-            letter: str
-        '''
-        letter_map = {0: 'A', 1: 'B', 2: 'C', 3: 'D'}
-        if isinstance(label, (int, float)):
-            return letter_map.get(int(label), str(label))
-        return str(label)
-
-    def convert_logits_to_LOS_value(smart_logits):
-        '''
-        convert SMART logits to 4 classes probability distribution
-        Args:
-            smart_logits: torch.Tensor or np.ndarray of shape [4]
-            4 classes respectively correspond to:
-            - 0: < 3 days
-            - 1: 3-7 days
-            - 2: 7-14 days
-            - 3: > 14 days
-        Returns:
-            probs: list of float, 4 classes probability distribution
-        '''
-        # Convert to numpy if it's a torch tensor
-        if isinstance(smart_logits, torch.Tensor):
-            logits_np = smart_logits.cpu().numpy()
-        else:
-            logits_np = np.array(smart_logits)   
-
-        # Apply softmax to convert logits to probabilities
-        exp_logits = np.exp(logits_np - np.max(logits_np))  # numerical stability
-        probs = exp_logits / np.sum(exp_logits)
-                
-        # Return list of probabilities for 4 classes
-        return [float(prob) for prob in probs]
-            
-    def format_los_probs(probs):
-        '''format LOS probability output, only show the letter of the class with the highest probability (A/B/C/D)'''
-        max_idx = np.argmax(probs)
-        # convert number index to letter: 0->A, 1->B, 2->C, 3->D
-        letter_map = {0: 'A', 1: 'B', 2: 'C', 3: 'D'}
-        return letter_map.get(max_idx, str(max_idx))
-
-    # detail EHR prompt for one patient
-    detail = patient_example['detail']
+                                    add_smart_logits_for_test_example: bool = False) -> str:
+    from prompt.EHR_prompt.common import build_ehr_prompt
     if smooth_hourly_data:
-        from prompt.EHR_prompt.mimic3.utils import mimic3_smooth_hourly_data
-        patient_example = mimic3_smooth_hourly_data(patient_example, keep_last=keep_last)
-    # load template
-    if is_few_shot:
-        if add_smart_logits:
-            from prompt.EHR_prompt.prompt_template import USERPROMPT_FEW_SHOT_SMART_WITH_LOGITS as PROMPT_TEMPLATE
-        else:
-            from prompt.EHR_prompt.prompt_template import USERPROMPT_FEW_SHOT as PROMPT_TEMPLATE
-    else:
-        # zero-shot ICL
-        from prompt.EHR_prompt.prompt_template import USERPROMPT_ZERO_SHOT as PROMPT_TEMPLATE
-    
-    from prompt.EHR_prompt.prompt_template import TASK_DESCRIPTION
-    
-    # load response format
-    if inference_type == 'only_answer':
-        from prompt.EHR_prompt.prompt_template import RESPONSE_FORMAT_ONLY_ANSWER as RESPONSE_FORMAT
-    else:
-        raise ValueError(f'we have not implemented the inference type for {inference_type}')
-
-    # load few-shot examples
-    if is_few_shot:
-        if add_smart_logits:
-            example = '\n\n'.join([
-                f"Example {i+1}:\n{icl_example['detail']}\nExpert Model Outputs: {format_los_probs(convert_logits_to_LOS_value(icl_example['smart_logits']))}\nLabel: {label_to_letter(icl_example['label'])}"
-                for i, icl_example in enumerate(icl_examples_list)
-            ])
-                             
-        else:
-            example = '\n\n'.join([
-                f"Example {i+1}:\n{icl_example['detail']}\nLabel: {label_to_letter(icl_example['label'])}"
-                for i, icl_example in enumerate(icl_examples_list)
-            ])
-    else:
-        example = ''
-        
-    X = patient_example['X']
-    record_times = X[:, 0].astype(float)
-
-    prompt = PROMPT_TEMPLATE.format(
-        LENGTH=len(record_times),
-        RECORD_TIME_LIST=', '.join([f"{float(t):.2f}" for t in record_times]),
-        DETAIL=detail,
-        RESPONSE_FORMAT=RESPONSE_FORMAT['mimic3_los'],
-        TASK_DESCRIPTION=TASK_DESCRIPTION['mimic3_los'],
-        EXAMPLE=example,)
-
-    # For ablation study, whether to add SMART model logits to the test example
-    if add_smart_logits_for_test_example:
-        probs = convert_logits_to_LOS_value(patient_example['smart_logits'])
-        prompt += f"\nExpert Model Outputs: {format_los_probs(probs)}"
-        prompt += f"\nPlease focus on the Expert model's results and provide your answer based on the ICL examples:"
-        
-
-    return prompt
+        raise ValueError('Apply temporal aggregation before EHR serialization')
+    return build_ehr_prompt(
+        patient_example, 'mimic3_los', icl_examples_list,
+        is_few_shot=is_few_shot, inference_type=inference_type,
+        unit=unit, reference_range=reference_range,
+        add_smart_logits=add_smart_logits,
+        add_smart_logits_for_test_example=add_smart_logits_for_test_example)

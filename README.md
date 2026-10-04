@@ -1,128 +1,62 @@
-# 🚶 GraphWalker
+# GraphWalker
 
-**GraphWalker** is a graph-guided in-context learning (ICL) framework for clinical reasoning with large language models (LLMs) on electronic health records (EHRs).  
-It selects informative and complementary demonstrations by jointly modeling **patient-level clinical similarity**, **cohort-level population structure**, and **LLM-estimated information gain**, following the methodology described in our ACL submission.
+**GraphWalker** is a graph-guided in-context learning framework for predicting clinical outcomes from electronic health records. It combines patient representations, cohort retrieval, and full greedy frontier search to select informative demonstrations for a frozen LLM.
 
-### Motivation
+The accompanying paper is **The Doctor's Casebook: When LLMs Reason by Patient Analogy via Information Gain-Guided Graph Search**.
 
-![Figure 1: Motivation](figs/fig1.png)
+## Motivation
 
-### Framework Overview
+![Motivation](figs/fig1.png)
 
-![Figure 2: Framework Overview](figs/fig2.png)
+## Framework
 
-## 📋 Requirements
+![Framework overview](figs/fig2.png)
 
-- 🐍 Python 3.10
-- 🎮 CUDA 12.x (for GPU acceleration)
-- 📦 Conda (recommended for environment management)
+## Installation
 
-### 🤖 LLM Libraries
-
-The framework relies on the following key LLM libraries (automatically installed via `environment.yml`):
-
-- **vLLM** (v0.8.5): High-throughput LLM inference and serving engine with PagedAttention
-- **Transformers** (v4.51.3): Hugging Face library for state-of-the-art NLP models
-- **PyTorch** (v2.6.0): Deep learning framework with CUDA 12.x support
-
-## 🛠️ Installation
-
-### 1️⃣ Clone the repository
+Local GraphWalker inference requires Linux and an NVIDIA GPU with sufficient memory for the chosen LLM. Dependencies are listed in [requirements.txt](requirements.txt).
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/PuppyKnightUniversity/GraphWalker.git
 cd GraphWalker
-```
-
-### 2️⃣ Create and activate conda environment
-
-```bash
-conda env create -f environment.yml
+conda create -n ehrbase python=3.10 pip -y
 conda activate ehrbase
+python -m pip install -r requirements.txt
 ```
 
-Alternatively, if you prefer to use `environment_base.yml`:
+## Usage
+
+Prepare patient records as `longitudinal.jsonl` under the dataset directory, together with local LLM and pretrained SMART encoder checkpoints. The input format is defined in [src/data/longitudinal.py](src/data/longitudinal.py). Supply paths through command-line arguments or [src/args/local_path_config.py](src/args/local_path_config.py).
+
+Run from the repository root:
 
 ```bash
-conda env create -f environment_base.yml
-conda activate ehrbase
-```
-
-### 3️⃣ Install additional dependencies (if needed)
-
-If you need to install packages from `requirements.txt`:
-
-```bash
-pip install -r requirements.txt
-```
-
-## 🚀 Usage
-
-### 💡 Basic Usage
-
-Run the main script with command-line arguments:
-
-```bash
-cd src
-python main.py \
-    --dataset <dataset_name> \
-    --method <method_name> \
-    --llm_name <llm_model_name> \
-    --seed 3407
-```
-
-### ✨ Example: Running GraphWalker
-
-```bash
-cd src
-CUDA_VISIBLE_DEVICES=0,1 python main.py \
+CUDA_VISIBLE_DEVICES=0,1 python src/main.py \
     --dataset mimic4_readmission \
-    --llm_name qwen3-14b-instruct \
-    --seed 3407 \
+    --dataset_path /path/to/mimic4 \
     --method graph_walker \
-    --icl_examples_num 3 \
-    --max_tokens_each_patient 10000 \
+    --llm_name qwen3-14b-instruct \
+    --llm_local_path /path/to/Qwen3-14B \
     --use_vllm \
-    --period_length 24 \
     --embedding_model_name smart \
-    --graph_walker_neighbor_num 4 \
-    --graph_walker_top_l_cohorts 2 \
-    --graph_walker_top_k_per_cohort 3 \
-    --graph_walker_n_clusters 10
+    --embedding_model_path /path/to/smart/checkpoint-mse.pth \
+    --vllm_max_model_len 20480 \
+    --seed 3407 \
+    --mid_data_dump_path ./mid_data \
+    --metrics_save_path ./results/mimic4_readmission/seed-3407.json
 ```
 
-### 📊 Supported Datasets
+For zero-shot prediction, use `--method llm_zero_shot` and omit the embedding arguments. View the full set of options with:
 
-- 📈 `mimic3_mortality`
-- 📈 `mimic3_los`
-- 📈 `mimic4_readmission`
-- 📈 `cmb`
-- 📈 `medqa`
+```bash
+python src/main.py --help
+```
 
+Per-run metrics are saved to `--metrics_save_path`. Results across seeds can be aggregated with [summarize_seed_runs.py](src/scripts/graph_walker/summarize_seed_runs.py).
 
-### ⚙️ Key Arguments
+## Tests
 
-- `--dataset`: 📁 Dataset to use (required)
-- `--method`: 🔧 Method to run (required)
-- `--llm_name`: 🤖 Name of the LLM model (required for LLM methods)
-- `--seed`: 🌱 Random seed 
-- `--period_length`: ⏱️ Period length for data processing (default: 48)
-- `--max_tokens_each_patient`: 🔢 Maximum tokens per patient prompt (default: 10000)
-- `--icl_examples_num`: 📝 Number of few-shot examples (default: 3)
-- `--use_vllm`: ⚡ Use vLLM for inference (optional)
-- `--toy_dataset`: 🧪 Use a smaller subset for testing (optional)
-
-
-## ⚙️ Configuration
-
-Before running, make sure to configure the following paths in `src/args/local_path_config.py`:
-
-- 📂 Dataset paths
-- 🤖 LLM model paths
-- 🔤 Embedding model paths
-
-## 📝 Notes
-
-- 💻 The project requires GPU support for optimal performance
-- ✅ Make sure your CUDA version is compatible with PyTorch and vLLM
-- 🔄 For first-time setup, data preprocessing may be required depending on your dataset
+```bash
+python -m pip install -r requirements-test.txt
+python -m pytest -q tests
+```

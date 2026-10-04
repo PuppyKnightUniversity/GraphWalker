@@ -4,10 +4,17 @@ def prepare_ehr_data(args, logger=None):
         from utils.logger import get_logger
         logger = get_logger("EHR-DataPrep")
     
-    # Basic ehr data preparation and wrap prompt
     logger.data_preparation_start(args.dataset)
     
-    if args.dataset == "mimic3_mortality":
+    protocol = getattr(args, 'ehr_protocol', 'historical_visits')
+    if protocol not in ('historical_visits', 'single_stay'):
+        raise ValueError(f'Unknown EHR protocol: {protocol}')
+    if protocol == 'single_stay' and getattr(args, 'ehr_records_path', None):
+        raise ValueError('--ehr_records_path requires --ehr_protocol historical_visits')
+    if protocol == 'historical_visits':
+        from data.longitudinal import prepare_longitudinal_data
+        train_data, val_data, test_data = prepare_longitudinal_data(args)
+    elif args.dataset == "mimic3_mortality":
         from data.mimic3.prepare_mimic3_mortality import prepare
         train_data, val_data, test_data = prepare(args)
     elif args.dataset == "mimic3_los":
@@ -30,6 +37,9 @@ def prepare_ehr_data(args, logger=None):
         train_data, val_data, test_data = prepare(args)
     else:
         raise ValueError(f"Dataset {args.dataset} not supported")
+
+    for split in (train_data, val_data, test_data):
+        split.setdefault('data_protocol', [protocol] * len(split['X']))
 
     # Display data preparation completion
     logger.data_preparation_complete(
@@ -59,4 +69,3 @@ if __name__ == "__main__":
     from utils.utils import set_seed
     set_seed(args.seed)
     train_dataset, val_dataset, test_dataset = prepare_ehr_data(args)
-    breakpoint()

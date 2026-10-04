@@ -3,10 +3,11 @@
 根据当前选择的ICL样例，计算对于test的条件熵
 计算方法和graph_walker保持一致，复用vllm加速的代码
 """
+from __future__ import annotations
+
 from typing import List, Dict, Any, Optional
 import torch
 from transformers import AutoTokenizer
-from vllm import LLM, SamplingParams
 from utils.logger import get_logger
 
 
@@ -15,8 +16,9 @@ def compute_average_conditional_entropy(
     train_dataset,
     test_dataset,
     ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS: Optional[List[List[Dict[str, Any]]]] = None,
-    logger=None
-) -> float:
+    logger=None,
+    return_metrics=False,
+):
     """
     计算test集合上平均条件熵
     
@@ -24,7 +26,7 @@ def compute_average_conditional_entropy(
         args: 参数对象
         train_dataset: 训练数据集
         test_dataset: 测试数据集
-        ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS: ICL样例列表，如果为None，则从prompt中提取
+        ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS: ICL样例列表；None表示不使用示例
         logger: 日志记录器
     
     Returns:
@@ -33,7 +35,6 @@ def compute_average_conditional_entropy(
     if logger is None:
         logger = get_logger("ConditionalEntropy")
     
-    # 如果ICL样例列表为空，直接返回错误
     if ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS is None:
         ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS = []
     # 加载vLLM模型
@@ -41,56 +42,66 @@ def compute_average_conditional_entropy(
     vllm_model = _load_vllm_model(args, logger=logger)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # 获取tokenizer
-    model_path = args.llm_local_path
-    tokenizer = _get_tokenizer(model_path, device)
     
     # 计算每个test样本的条件熵
     patient_num = len(test_dataset['detail'])
     conditional_entropies = []
+    information_gains = []
     
     logger.info(f"Computing conditional entropy for {patient_num} test patients...")
     progress = logger.create_progress("Computing conditional entropy", patient_num)
     
-    with progress:
-        task = progress.add_task("Computing conditional entropy", total=patient_num)
-        
-        for i in range(patient_num):
-            # 构建test patient example
-            test_patient_example = {}
-            for key in test_dataset.keys():
-                test_patient_example[key] = test_dataset[key][i]
-            
-            # 获取当前test patient的ICL样例
-            ICL_EXAMPLES_LIST = ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS[i] if i < len(ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS) else []
-            
-            # 将ICL样例转换为node indices（如果是Dict格式，需要找到对应的索引）
-            example_node_indices = _convert_icl_examples_to_node_indices(
-                ICL_EXAMPLES_LIST, train_dataset
-            )
-            
-            # 计算条件熵
-            ce_loss = _compute_cross_entropy_for_examples(
-                args,
-                test_patient_example,
-                train_dataset,
-                example_node_indices,
-                vllm_model,
-                device,
-                getattr(args, 'graph_walker_parallel_batch_size_for_cal_greedy_score', 2)
-            )
-            
-            conditional_entropies.append(ce_loss)
-            progress.update(task, advance=1)
-    
-    # 释放vLLM模型
-    _release_vllm_model(vllm_model, logger=logger)
+    try:
+        with progress:
+            task = progress.add_task("Computing conditional entropy", total=patient_num)
+
+            for i in range(patient_num):
+                # 构建test patient example
+                test_patient_example = {}
+                for key in test_dataset.keys():
+                    test_patient_example[key] = test_dataset[key][i]
+
+                # 获取当前test patient的ICL样例
+                ICL_EXAMPLES_LIST = ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS[i] if i < len(ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS) else []
+
+                # 将ICL样例转换为node indices（如果是Dict格式，需要找到对应的索引）
+                example_node_indices = _convert_icl_examples_to_node_indices(
+                    ICL_EXAMPLES_LIST, train_dataset
+                )
+
+                # 计算条件熵
+                ce_loss = _compute_cross_entropy_for_examples(
+                    args,
+                    test_patient_example,
+                    train_dataset,
+                    example_node_indices,
+                    vllm_model,
+                    device,
+                    getattr(args, 'graph_walker_parallel_batch_size_for_cal_greedy_score', 2)
+                )
+
+                zero_shot_ce = _compute_cross_entropy_for_examples(
+                    args, test_patient_example, train_dataset, [], vllm_model, device,
+                    getattr(args, 'graph_walker_parallel_batch_size_for_cal_greedy_score', 2),
+                ) if example_node_indices else ce_loss
+                conditional_entropies.append(ce_loss)
+                information_gains.append(zero_shot_ce - ce_loss)
+                progress.update(task, advance=1)
+
+    finally:
+        del vllm_model
+        _release_vllm_model(logger=logger)
     
     # 计算平均条件熵
     avg_conditional_entropy = sum(conditional_entropies) / len(conditional_entropies) if conditional_entropies else float('inf')
     
     logger.success(f"Average conditional entropy on test set: {avg_conditional_entropy:.4f}")
     
+    if return_metrics:
+        return {
+            'avg_conditional_entropy': avg_conditional_entropy,
+            'avg_delta_H': sum(information_gains) / len(information_gains) if information_gains else float('nan'),
+        }
     return avg_conditional_entropy
 
 
@@ -116,6 +127,14 @@ def _convert_icl_examples_to_node_indices(
     train_labels = train_dataset['y']
     
     for icl_example in ICL_EXAMPLES_LIST:
+        node_index = icl_example.get('node_index')
+        if node_index is not None:
+            if not 0 <= node_index < len(train_details):
+                raise ValueError('ICL node index is outside the training set')
+            if train_details[node_index] != icl_example['detail']:
+                raise ValueError('ICL node index does not match the training record')
+            node_indices.append(node_index)
+            continue
         # 尝试通过detail和label匹配找到对应的索引
         # ICL样例可能使用'label'或'y'字段
         example_detail = icl_example.get('detail', '')
@@ -131,10 +150,7 @@ def _convert_icl_examples_to_node_indices(
                     break
         
         if not found:
-            # 如果找不到完全匹配的，尝试通过其他方式匹配
-            # 这里可以根据实际情况调整匹配策略
-            # 注意：这里不记录警告，因为可能ICL样例格式不同
-            pass
+            raise ValueError('Selected example was not found in the training set')
     
     return node_indices
 
@@ -151,6 +167,7 @@ def _load_vllm_model(args, logger=None) -> LLM:
         vLLM模型实例
     """
     import os
+    from vllm import LLM
     
     # 检测GPU数量
     gpu_count = torch.cuda.device_count()
@@ -198,41 +215,9 @@ def _load_vllm_model(args, logger=None) -> LLM:
     return vllm_model
 
 
-def _release_vllm_model(vllm_model: LLM, logger=None):
-    """
-    释放vLLM模型内存
-    
-    Args:
-        vllm_model: vLLM模型实例
-        logger: 日志记录器
-    """
-    if vllm_model is None:
-        return
-    
-    try:
-        if logger:
-            logger.info("Releasing vLLM model memory...")
-        
-        # Delete the model object
-        # vLLM will handle internal resource cleanup when the object is deleted
-        del vllm_model
-        
-        # Force garbage collection to ensure Python objects are freed
-        import gc
-        gc.collect()
-        
-        # Clear GPU cache to free up GPU memory
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-        
-        if logger:
-            logger.success("vLLM model memory released successfully")
-    except Exception as e:
-        if logger:
-            logger.warning(f"Failed to release vLLM model memory: {e}")
-        else:
-            print(f"Warning: Failed to release vLLM model memory: {e}")
+def _release_vllm_model(logger=None):
+    from icl.method.graph_walker import _release_vllm_model as release
+    release(logger=logger)
 
 
 def _get_tokenizer(model_path: str, device: torch.device) -> AutoTokenizer:
@@ -247,7 +232,7 @@ def _get_tokenizer(model_path: str, device: torch.device) -> AutoTokenizer:
         Tokenizer实例
     """
     # 使用全局缓存
-    from icl.method.graph_walker_v7 import _metric_tokenizer_cache
+    from icl.method.graph_walker import _metric_tokenizer_cache
     
     if model_path not in _metric_tokenizer_cache:
         tokenizer = AutoTokenizer.from_pretrained(
@@ -276,7 +261,7 @@ def _build_prompt_from_examples(
         Prompt字符串
     """
     # 复用graph_walker中的实现
-    from icl.method.graph_walker_v7 import _build_prompt_from_examples as graph_walker_build_prompt
+    from icl.method.graph_walker import _build_prompt_from_examples as graph_walker_build_prompt
     return graph_walker_build_prompt(args, test_patient_example, train_dataset, example_node_indices)
 
 
@@ -301,9 +286,8 @@ def _compute_cross_entropy_for_examples(
         交叉熵（条件熵）值
     """
     # 复用graph_walker中的实现
-    from icl.method.graph_walker_v7 import _compute_cross_entropy_for_examples as graph_walker_compute_ce
+    from icl.method.graph_walker import _compute_cross_entropy_for_examples as graph_walker_compute_ce
     return graph_walker_compute_ce(
         args, test_patient_example, train_dataset, example_node_indices,
         vllm_model, device, parallel_batch_size_for_cal_greedy_score
     )
-

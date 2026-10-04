@@ -54,7 +54,7 @@ def llm_dataset_inference(args,
 
             return_logits = False
             if args.dataset in ['mimic3_los']:
-                classification_options = ['A', 'B', 'C', 'D']  # 使用字母选项：A=<3天, B=3-7天, C=7-14天, D=>14天
+                classification_options = ['A', 'B', 'C', 'D']
                 return_logits = True
             else:
                 classification_options = None         
@@ -63,6 +63,7 @@ def llm_dataset_inference(args,
                 args,
                 args.llm_local_path,
                 test_dataset['data_prompt_fomat'],
+                adapter_path=getattr(args, 'llm_adapter_path', None),
                 save_path=getattr(args, 'llm_responses_save_path', None),
                 labels=labels_list,
                 logger=logger,
@@ -73,6 +74,8 @@ def llm_dataset_inference(args,
                 classification_options=classification_options,
                 enable_thinking=getattr(args, 'vllm_enable_thinking', False),
             )
+        else:
+            raise ValueError("Local inference requires --use_vllm")
     logger.processing_complete("LLM inference")
 
     # print example of LLM response

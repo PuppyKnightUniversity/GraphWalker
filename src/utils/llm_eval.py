@@ -166,7 +166,7 @@ def evaluate_and_save(score_list, label_list, save_path):
         json.dump(metrics, f, indent=4)
 
 
-def evaluate_binary_model(score_list, label_list, verbose=True): 
+def evaluate_binary_model(score_list, label_list, verbose=True, threshold=0.5):
     """
     Evaluate the performance of a binary classification model by calculating various metrics
     and optionally plotting ROC and Precision-Recall curves.
@@ -192,14 +192,12 @@ def evaluate_binary_model(score_list, label_list, verbose=True):
     auprc = average_precision_score(y_true, y_scores)
     brier_score = brier_score_loss(y_true, y_scores)
     
-    # ===== Best F1 Score and MinPSE Calculation =====
-    precisions, recalls, thresholds = precision_recall_curve(y_true, y_scores)
-    f1_scores = 2 * precisions * recalls / (precisions + recalls + 1e-8)  # Avoid division by zero
-    best_idx = np.argmax(f1_scores)
-    best_f1 = f1_scores[best_idx]
-    # thresholds length = len(precisions)-1, 所以用条件判断一下
-    best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 1.0
-    
+    if not 0 <= threshold <= 1:
+        raise ValueError("The classification threshold must be in [0, 1]")
+    precisions, recalls, _ = precision_recall_curve(y_true, y_scores)
+    best_f1 = f1_score(y_true, y_scores >= threshold, zero_division=0)
+    best_threshold = threshold
+
     # Calculate minpse: max of min(precision, recall) across all thresholds
     minpse = np.max([min(x, y) for (x, y) in zip(precisions, recalls)])
     
@@ -226,7 +224,7 @@ def evaluate_binary_model(score_list, label_list, verbose=True):
     return metrics
 
 
-def evaluate_model_with_threshold(score_list, label_list, threshold=0.5): 
+def evaluate_model_with_threshold(score_list, label_list, threshold=0.5):
     """
     Evaluate the performance of a binary classification model by calculating various metrics
     and optionally plotting ROC and Precision-Recall curves.
@@ -350,7 +348,7 @@ def evaluate_binary_model_with_threshold(score_list, label_list, threshold):
     return metrics
 
 
-def bootstrap_metrics(score_list, label_list, n_bootstrap=1000, confidence_level=0.95, random_state=None):
+def bootstrap_metrics(score_list, label_list, n_bootstrap=1000, confidence_level=0.95, random_state=None, threshold=0.5):
     """
     Calculate bootstrap confidence intervals and statistics for binary classification metrics.
     
@@ -364,8 +362,7 @@ def bootstrap_metrics(score_list, label_list, n_bootstrap=1000, confidence_level
     Returns:
     dict: Dictionary containing bootstrap statistics for each metric
     """
-    if random_state is not None:
-        np.random.seed(random_state)
+    rng = np.random.default_rng(random_state)
     
     y_scores = np.array(score_list)
     y_true = np.array(label_list)
@@ -383,7 +380,7 @@ def bootstrap_metrics(score_list, label_list, n_bootstrap=1000, confidence_level
     # Perform bootstrap sampling
     for i in range(n_bootstrap):
         # Sample with replacement
-        indices = np.random.choice(n_samples, size=n_samples, replace=True)
+        indices = rng.choice(n_samples, size=n_samples, replace=True)
         boot_scores = y_scores[indices]
         boot_labels = y_true[indices]
         
@@ -405,8 +402,7 @@ def bootstrap_metrics(score_list, label_list, n_bootstrap=1000, confidence_level
             
             # F1 and MinPSE calculation
             precisions, recalls, thresholds = precision_recall_curve(boot_labels, boot_scores)
-            f1_scores = 2 * precisions * recalls / (precisions + recalls + 1e-8)
-            best_f1 = np.max(f1_scores)
+            best_f1 = f1_score(boot_labels, boot_scores >= threshold, zero_division=0)
             minpse = np.max([min(x, y) for (x, y) in zip(precisions, recalls)])
             
             # Check for NaN values in F1 and MinPSE
@@ -459,7 +455,7 @@ def bootstrap_metrics(score_list, label_list, n_bootstrap=1000, confidence_level
     return bootstrap_stats
 
 
-def evaluate_binary_model_with_bootstrap(score_list, label_list, n_bootstrap=1000, confidence_level=0.95, random_state=None, logger=None):
+def evaluate_binary_model_with_bootstrap(score_list, label_list, n_bootstrap=1000, confidence_level=0.95, random_state=None, logger=None, threshold=0.5):
     """
     Evaluate binary classification model with bootstrap confidence intervals.
     
@@ -475,10 +471,10 @@ def evaluate_binary_model_with_bootstrap(score_list, label_list, n_bootstrap=100
     dict: Dictionary containing metrics with bootstrap statistics
     """
     # Get original metrics
-    original_metrics = evaluate_binary_model(score_list, label_list, verbose=False)
+    original_metrics = evaluate_binary_model(score_list, label_list, verbose=False, threshold=threshold)
     
     # Get bootstrap statistics
-    bootstrap_stats = bootstrap_metrics(score_list, label_list, n_bootstrap, confidence_level, random_state)
+    bootstrap_stats = bootstrap_metrics(score_list, label_list, n_bootstrap, confidence_level, random_state, threshold=threshold)
     
     # Combine results
     combined_results = {}
@@ -900,7 +896,7 @@ def llm_response_evaluation(args, responses, logits, test_dataset, logger=None):
         
         # Evaluate with bootstrap
         logger.info("Starting bootstrap evaluation...")
-        bootstrap_metrics = evaluate_binary_model_with_bootstrap(score_list=predicions, label_list=y_true, n_bootstrap=1000, confidence_level=0.95, random_state=42, logger=logger)
+        bootstrap_metrics = evaluate_binary_model_with_bootstrap(score_list=predicions, label_list=y_true, n_bootstrap=1000, confidence_level=0.95, random_state=42, logger=logger, threshold=getattr(args, "classification_threshold", 0.5))
         logger.log_metrics(bootstrap_metrics, "LLM Response Evaluation Results (with Bootstrap)")
         return bootstrap_metrics
     elif args.dataset in ['mimic3_los']:
@@ -919,40 +915,15 @@ def llm_response_evaluation(args, responses, logits, test_dataset, logger=None):
         
         # 将logits字典列表转换为概率矩阵
         probs_list = []
-        for i, logit_dict in enumerate(logits):
-            if not isinstance(logit_dict, dict):
-                if logger:
-                    logger.warning(f"Sample {i}: logits is not a dict, got {type(logit_dict)}. Using uniform distribution.")
-                else:
-                    print(f"Warning: Sample {i}: logits is not a dict, got {type(logit_dict)}. Using uniform distribution.")
-                # 使用均匀分布作为默认值
-                probs = [1.0 / n_classes] * n_classes
-            else:
-                # 按照选项顺序提取概率
-                probs = []
-                for option in classification_options:
-                    if option in logit_dict:
-                        probs.append(float(logit_dict[option]))
-                    else:
-                        # 如果某个选项缺失，使用0作为默认值
-                        if logger:
-                            logger.warning(f"Sample {i}: option '{option}' not found in logits. Using 0.0.")
-                        probs.append(0.0)
-                # 归一化以确保概率和为1
-                prob_sum = sum(probs)
-                if prob_sum > 0:
-                    probs = [p / prob_sum for p in probs]
-                else:
-                    # 如果所有概率都是0，使用均匀分布
-                    probs = [1.0 / n_classes] * n_classes
-            
-            probs_list.append(probs)
-        
-        # 转换为numpy数组
+        for i, values in enumerate(logits):
+            if not isinstance(values, dict) or any(option not in values for option in classification_options):
+                raise ValueError(f"Missing LOS option probabilities for sample {i}")
+            probs = np.array([values[option] for option in classification_options], dtype=float)
+            if not np.isfinite(probs).all() or (probs < 0).any() or probs.sum() <= 0:
+                raise ValueError(f"Invalid LOS option probabilities for sample {i}")
+            probs_list.append(probs / probs.sum())
         probs_array = np.array(probs_list)
-        # 转换为numpy数组
-        probs_array = np.array(probs_list)
-        
+
         # 获取标签：test_dataset['y']中保存的已经是binned后的标签（0-3），直接使用
         y_true = np.array(test_dataset['y'], dtype=int)
         
@@ -982,7 +953,8 @@ def llm_response_evaluation(args, responses, logits, test_dataset, logger=None):
             logger=logger
         )
         logger.log_metrics(bootstrap_metrics, "LLM Response Evaluation Results (with Bootstrap)")
-        
+        return bootstrap_metrics
+
     elif args.dataset in ['cmb_exam_patient']:
         # Parse LLM responses to extract option letters
         predictions = []

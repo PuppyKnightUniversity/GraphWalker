@@ -4,6 +4,7 @@ Define arguments for scripts
 """
 
 import argparse
+from pathlib import Path
 from args.local_path_config import DATASET_PATH_MAP, LLM_PATH_MAP, EMBEDDING_MODEL_PATH_MAP
 
 def parse_args():
@@ -12,6 +13,7 @@ def parse_args():
     '''
         Seed Settings
     '''
+    parser.add_argument("--data_split_seed", type=int, default=3407, help="Patient split seed, independent of experiment seed")
     parser.add_argument("--seed", type=int, default=3407, help="Seed Settings")
 
     '''
@@ -28,9 +30,14 @@ def parse_args():
                                                                                     'cmb_clin',
                                                                                     'medqa'], help="Dataset to use")
     parser.add_argument("--dataset_path", type=str, default=None, help="Dataset path")
-    parser.add_argument("--period_length", type=int, default=48, help="Period length for the data")
-    parser.add_argument("--channel_info_path", type=str, default='../reference_code/SMART/data/resources/channel_info.json', help="Channel info path")
-    parser.add_argument("--discretizer_config_path", type=str, default='../reference_code/SMART/data/resources/discretizer_config.json', help="Discretizer config path")
+    parser.add_argument('--ehr_protocol', choices=['historical_visits', 'single_stay'], default='historical_visits', help='Predict the final visit from earlier visits, or use single-stay benchmark inputs')
+    parser.add_argument('--ehr_records_path', help='Patient JSONL path; defaults to dataset_path/longitudinal.jsonl')
+    parser.add_argument('--patient_id_field', help='Patient identifier field in processed single-stay records')
+    parser.add_argument('--hospital_los_path', help='CSV with name, hospital_admitted_at, hospital_discharged_at for MIMIC-III single-stay LOS')
+    parser.add_argument("--period_length", type=int, default=48, help="Single-stay observation window in hours")
+    resources = Path(__file__).resolve().parents[1] / 'data' / 'mimic3'
+    parser.add_argument("--channel_info_path", type=str, default=str(resources / 'channel_info.json'), help="Channel info path")
+    parser.add_argument("--discretizer_config_path", type=str, default=str(resources / 'discretizer_config.json'), help="Discretizer config path")
     parser.add_argument("--mid_data_dump_path", type=str, default='../mid_data', help="Dump path for the processed mid data")
     parser.add_argument("--train_ratio", type=float, default=0.8, help="Train ratio for the data")
     parser.add_argument("--unit", action="store_true", default=True, help="Whether to include unit information in the prompt")
@@ -45,18 +52,19 @@ def parse_args():
                                                                                 "llm_sft_eval",
                                                                                 "llm_sft_eval_vllm",
                                                                                 "llm_ids_iterative"])
-    
+
     parser.add_argument("--max_tokens_each_patient", type=int, default=10000, help="Maximum tokens for each patient's prompt")
     parser.add_argument("--icl_examples_num", type=int, default=3, help="Number of few-shot examples to use")
-    
+
+    parser.add_argument("--classification_threshold", type=float, default=0.5, help="Binary F1 threshold fixed before test evaluation; choose on validation data only")
     parser.add_argument("--inference_type", type=str, default="only_answer", choices=["only_answer"], help="Inference type, only suitable for llm.")
     parser.add_argument("--force_recompute_prompt_wrapper", action="store_true", default=False, help="Force re-wrapping prompts and ignore cached mid_data")
     '''
         LLM Settings
     '''
     parser.add_argument("--llm_name", type=str, default="qwen2-5-7b-instruct", choices=["qwen2-5-7b-instruct",
-                                                                                        "qwen2-5-14b-instruct", 
-                                                                                        "qwen2-5-72b-instruct", 
+                                                                                        "qwen2-5-14b-instruct",
+                                                                                        "qwen2-5-72b-instruct",
                                                                                         "qwen3-14b-instruct",
                                                                                         "qwen3-32b-instruct",
                                                                                         "llama-3.1-8b-instruct",
@@ -68,6 +76,7 @@ def parse_args():
                                                                                         "gpt-5"], help="LLM to use")
     parser.add_argument("--llm_local_path", type=str, default=None, help="LLM local path")
     parser.add_argument("--llm_adapter_path", type=str, default=None, help="LLM adapter path")
+    parser.add_argument("--metrics_save_path", type=str, default=None, help="Write per-run metrics and configuration to this JSON file")
     parser.add_argument("--llm_responses_save_path", type=str, default=None, help="Directory to save individual LLM responses for checkpoint support")
     parser.add_argument("--is_api", action="store_true", default=False, help="Whether to use API to inference")
 
@@ -92,7 +101,7 @@ def parse_args():
     parser.add_argument("--sft_fp16", action="store_true", default=True, help="Use fp16 training for SFT")
     parser.add_argument("--sft_output_dir", type=str, default="../export/sft/", help="Output directory for SFT checkpoints")
     parser.add_argument("--sft_dry_run", action="store_true", default=False, help="Only build dataset and exit for SFT")
-    parser.add_argument("--sft_use_lora", action="store_true", default=False, help="Use LoRA for SFT")
+    parser.add_argument("--sft_use_lora", action=argparse.BooleanOptionalAction, default=True, help="Use LoRA for SFT")
     parser.add_argument("--sft_lora_r", type=int, default=16, help="LoRA rank")
     parser.add_argument("--sft_lora_alpha", type=int, default=32, help="LoRA alpha")
     parser.add_argument("--sft_lora_dropout", type=float, default=0.05, help="LoRA dropout")
@@ -105,7 +114,7 @@ def parse_args():
     '''
     parser.add_argument("--embedding_model_name", type=str, default=None, choices=["smart", "qwen3-embedding-8b"], help="Embedding model to use, if None, the embedding model will not be used")
     parser.add_argument("--embedding_model_train_from_scratch", action="store_true", default=False, help="Whether to train the embedding model from scratch, if True, the embedding model will be trained from scratch, otherwise, the embedding model will be loaded from the checkpoint")
-    parser.add_argument("--embedding_model_path", type=str, default=None, help="Embedding model path")
+    parser.add_argument("--embedding_model_path", type=str, default=None, help="Embedding model path; for SMART, an explicit pretrained encoder checkpoint")
     '''
         Smart Model Settings
     '''
@@ -113,7 +122,7 @@ def parse_args():
     parser.add_argument('--smart_epochs', type=int, default=25)
     parser.add_argument('--smart_lr', type=float, default=1e-3)
     parser.add_argument('--smart_d_model', type=int, default=32)
-    parser.add_argument('--smart_seed', type=int, default=3407) 
+    parser.add_argument('--smart_seed', type=int, default=3407)
     parser.add_argument('--smart_batch_size', type=int, default=64)
     parser.add_argument('--smart_dropout', type=float, default=0.1)
     parser.add_argument('--smart_save_model', type=bool, default=True)
@@ -141,60 +150,51 @@ def parse_args():
     '''
         ICL method Settings
     '''
+    parser.add_argument('--graph_walker_no_early_stop', action='store_true', help='Ablation: continue even if the best marginal gain is non-positive')
     # For method graph_walker
-    parser.add_argument('--graph_walker_neighbor_num', type=int, default=3, help="Graph walker neighbor number, when building the graph, each node will be connected to the top-k most similar nodes")
+    parser.add_argument('--graph_walker_neighbor_num', type=int, default=8, help="Graph walker neighbor number, when building the graph, each node will be connected to the top-k most similar nodes")
     parser.add_argument('--graph_walker_parallel_batch_size_for_cal_greedy_score', type=int, default=2, help="Parallel batch size for calculating greedy score")
     parser.add_argument('--graph_walker_test_topk', type=int, default=3, help="Graph walker test top-k, when we add the test patient to the graph, we will connect it to the top-k most similar nodes")
-    
-    parser.add_argument('--graph_walker_n_clusters', type=int, default=10, help="Graph walker n clusters, when we use K-means to find patient cohorts, the number of clusters")
+
+    parser.add_argument('--graph_walker_n_clusters', type=int, default=10, help="Deprecated compatibility option; ignored by Leiden (use graph_walker_leiden_resolution)")
     parser.add_argument('--graph_walker_top_l_cohorts', type=int, default=3, help="Graph walker top-l cohorts, when we find the top-l candidate cohorts for the test patient, the number of cohorts")
-    parser.add_argument('--graph_walker_top_k_per_cohort', type=int, default=2, help="Graph walker top-k per cohort, when we build the initial frontiers, the number of patients to select from each cohort")
-    
-    parser.add_argument('--graph_walker_leiden_resolution', type=float, default=0.9, help="Graph walker Leiden resolution parameter (higher = more clusters, lower = fewer clusters)")
-    parser.add_argument('--graph_walker_mode', type=str, default='frontiers-lazy-greedy', choices=['random', 'frontiers-lazy-greedy'], help="Graph walker mode, when we select the patients from the cohorts, we can used different strategies to select the patients")
+    parser.add_argument('--graph_walker_top_k_per_cohort', type=int, default=3, help="Graph walker top-k per cohort, when we build the initial frontiers, the number of patients to select from each cohort")
+
+    parser.add_argument('--graph_walker_leiden_resolution', type=float, default=1.0, help="Leiden resolution; 1.0 uses standard modularity")
+    parser.add_argument('--graph_walker_mode', type=str, default='frontiers-full-greedy', choices=['random', 'frontiers-full-greedy'], help="Graph walker mode, when we select the patients from the cohorts, we can used different strategies to select the patients")
     parser.add_argument('--graph_walker_add_smart_logits', action="store_true", default=False, help="Whether to add SMART model logits to the graph walker examples, if True, the SMART model logits will be added to the graph walker examples, otherwise, the SMART model logits will not be added to the graph walker examples")
     parser.add_argument('--graph_walker_add_smart_logits_for_test_example', action="store_true", default=False, help="Whether to add SMART model logits to the test example, if True, the SMART model logits will be added to the test example, otherwise, the SMART model logits will not be added to the test example")
-    
+
     # For conditional entropy computation
     parser.add_argument('--final_delta_H', action="store_true", default=False, help="Whether to compute average conditional entropy on test set")
-    
-    # Check if we're in a Jupyter notebook environment
-    try:
-        # Try to get the current module's name
-        import sys
-        if 'ipykernel' in sys.modules or 'IPython' in sys.modules:
-            # We're in a Jupyter notebook, use default values
-            args = parser.parse_args([])
-        else:
-            # We're in a regular script, parse command line arguments
-            args = parser.parse_args()
-    except:
-        # Fallback: use default values
-        args = parser.parse_args([])
-    
+
+    import sys
+    notebook = 'ipykernel' in sys.modules or 'IPython' in sys.modules
+    args = parser.parse_args([] if notebook else None)
+
     if args.dataset_path is None:
         dataset_key = args.dataset
         if dataset_key in DATASET_PATH_MAP:
             args.dataset_path = DATASET_PATH_MAP[dataset_key]
         else:
             raise ValueError(f"No dataset path mapping found for {dataset_key}")
-            
+
     if args.llm_local_path is None:
         llm_key = args.llm_name
         if llm_key in LLM_PATH_MAP:
             args.llm_local_path = LLM_PATH_MAP[llm_key]
         else:
             raise ValueError(f"No LLM local path mapping found for {llm_key}")
-    
+
     if args.embedding_model_path is None and args.embedding_model_name != "smart" and args.embedding_model_name is not None:
         embedding_model_key = args.embedding_model_name
         if embedding_model_key in EMBEDDING_MODEL_PATH_MAP:
             args.embedding_model_path = EMBEDDING_MODEL_PATH_MAP[embedding_model_key]
         else:
             raise ValueError(f"No embedding model path mapping found for {embedding_model_key}")
-    
+
     # Assertion: if ICL examples don't have SMART logits, test example shouldn't have them either
     if not args.graph_walker_add_smart_logits and args.graph_walker_add_smart_logits_for_test_example:
         raise ValueError("Cannot add SMART logits to test example when ICL examples don't have SMART logits. Set --graph_walker_add_smart_logits to True if you want to add SMART logits to test example.")
-    
+
     return args

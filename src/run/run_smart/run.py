@@ -44,7 +44,7 @@ def run_smart_pretrain(args, logger):
         "--nnodes", "1",
         "--nproc_per_node", nproc_per_node,
         "--master_port", str(random_port),
-        "-m", "run.run_smart.smart_pretrain",   # 👈 模块方式调用
+        "-m", "run.run_smart.smart_pretrain",
         "--dataset", args.dataset,
         "--seed", str(args.seed)
     ]
@@ -103,7 +103,7 @@ def run_smart_finetune(args, logger):
         "--nnodes", "1",
         "--nproc_per_node", nproc_per_node,
         "--master_port", str(random_port),
-        "-m", "run.run_smart.smart_finetune",   # 👈 模块方式调用
+        "-m", "run.run_smart.smart_finetune",
         "--dataset", args.dataset,
         "--seed", str(args.seed)
     ]

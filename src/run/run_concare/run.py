@@ -17,7 +17,7 @@ def run_concare_train(args, logger):
     if "CUDA_VISIBLE_DEVICES" not in env:
         env["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
     env["PYTHONPATH"] = os.getcwd() + ":" + env.get("PYTHONPATH", "")
-    
+
     nproc_per_node = _infer_nproc_from_cuda_visible_devices(env["CUDA_VISIBLE_DEVICES"])
 
     cmd = [
@@ -25,11 +25,10 @@ def run_concare_train(args, logger):
         "--nnodes", "1",
         "--nproc_per_node", nproc_per_node,
         "--master_port", str(random_port),
-        "-m", "run.run_concare.concare_train", 
+        "-m", "run.run_concare.concare_train",
         "--dataset", args.dataset,
         "--seed", str(args.seed),
-        # Pass ConCare specific args here if they are not picked up automatically by parse_args inside the script
-        # But since we use same parse_args, it should be fine as long as we add them to args file
+        # Forward ConCare training options to the subprocess.
         "--concare_save_dir", args.concare_save_dir,
         "--concare_batch_size", str(args.concare_batch_size),
         "--concare_epochs", str(args.concare_epochs),
@@ -38,7 +37,7 @@ def run_concare_train(args, logger):
         "--concare_hidden_dim", str(args.concare_hidden_dim),
         "--concare_num_head", str(args.concare_num_head),
     ]
-    
+
     if args.toy_dataset:
         cmd.append("--toy_dataset")
 
@@ -63,24 +62,16 @@ def run_concare_train(args, logger):
         sys.exit(1)
 
 def run(args, train_dataset, val_dataset, test_dataset, logger):
-    # We call the subprocess which reloads data, so we don't pass datasets directly
-    # But checking if data exists is good
-    
-    # We need to ensure args passed to subprocess cover what's needed
+    # The training subprocess loads its own datasets.
     run_concare_train(args, logger)
 
 if __name__ == "__main__":
     from args.ehrbase_args import parse_args
     import pickle
-    
+
     args = parse_args()
-    
-    # Load data just to pass to run function signature, though subprocess reloads it
-    # Actually run function signature in runexp.py is:
-    # run_method(args, train_dataset, val_dataset, test_dataset, logger)
-    # So we need to match that.
-    
-    # In main execution context (torchrun), we need to load data
+
+    # Load cached datasets for direct module execution.
     train_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_train.pkl', 'rb'))
     val_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_val.pkl', 'rb'))
     test_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_test.pkl', 'rb'))

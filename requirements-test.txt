@@ -1,0 +1,9 @@
+numpy>=1.26,<3
+torch==2.6.0
+transformers==4.51.3
+igraph==1.0.0
+leidenalg==0.11.0
+rich>=13
+pytest>=8
+scikit-learn>=1.4
+scipy>=1.12
