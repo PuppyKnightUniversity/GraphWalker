@@ -16,9 +16,9 @@ The accompanying paper is **The Doctor's Casebook: When LLMs Reason by Patient A
 
 Local GraphWalker inference requires Linux and an NVIDIA GPU with sufficient memory for the chosen LLM. Dependencies are listed in [requirements.txt](requirements.txt).
 
+Download and extract the repository, then run the following commands from its root directory:
+
 ```bash
-git clone https://github.com/PuppyKnightUniversity/GraphWalker.git
-cd GraphWalker
 conda create -n ehrbase python=3.10 pip -y
 conda activate ehrbase
 python -m pip install -r requirements.txt
