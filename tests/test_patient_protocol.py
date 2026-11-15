@@ -101,12 +101,16 @@ def test_los_uses_total_hospital_interval():
         hospital_los_label({'y_los': 0})
 
 
-def test_daily_aggregation_and_forward_fill():
+@pytest.mark.parametrize('aggregation,first', [('last', 4), ('mean', 3)])
+@pytest.mark.parametrize('forward_fill', [False, True])
+def test_daily_aggregation_and_optional_forward_fill(aggregation, first, forward_fill):
     values, mask, times = daily_records(
         [[2, 1], [4, 3], [None, None], [8, 4]], [1, 2, 49, 73], 96,
-        ['continuous', 'categorical'], admitted_at='2020-01-01')
-    np.testing.assert_allclose(values, [[3, 3], [3, 3], [8, 4]])
-    np.testing.assert_array_equal(mask[:, 0], [True, False, True])
+        ['continuous', 'categorical'], admitted_at='2020-01-01',
+        continuous_agg=aggregation, forward_fill=forward_fill)
+    missing_day = [first, 3] if forward_fill else [np.nan, np.nan]
+    np.testing.assert_allclose(values, [[first, 3], missing_day, [8, 4]], equal_nan=True)
+    np.testing.assert_array_equal(mask, [[True, True], [False, False], [True, True]])
     np.testing.assert_array_equal(times, [2, 49, 73])
 
 
@@ -114,16 +118,64 @@ def test_daily_aggregation_and_forward_fill():
 def test_calendar_days_not_elapsed_24_hour_bins(origin):
     values, _, times = daily_records([[2], [4], [8]], [.5, 1, 2], 24,
                                      ['continuous'], admitted_at=origin)
-    np.testing.assert_array_equal(values[:, 0], [2, 6])
+    np.testing.assert_array_equal(values[:, 0], [2, 8])
     np.testing.assert_array_equal(times, [.5, 2])
 
 
-def test_last_seven_calendar_days_keep_earlier_locf_without_inventing_days():
+def test_sparse_observed_days_are_kept_without_inventing_calendar_days():
     values, mask, times = daily_records([[5], [None], [9]], [1, 73, 217], 240,
                                        ['continuous'], admitted_at='2020-01-01')
-    np.testing.assert_array_equal(times, [73, 217])
-    np.testing.assert_array_equal(values[:, 0], [5, 9])
-    np.testing.assert_array_equal(mask[:, 0], [False, True])
+    np.testing.assert_array_equal(times, [1, 73, 217])
+    np.testing.assert_array_equal(values[:, 0], [5, 5, 9])
+    np.testing.assert_array_equal(mask[:, 0], [True, False, True])
+
+
+@pytest.mark.parametrize('forward_fill', [False, True])
+def test_earlier_observations_merge_per_feature_before_last_seven_days(forward_fill):
+    # Ten observed days spread across three weeks; the first three become one step.
+    times = np.array([1, 25, 73, 97, 145, 217, 265, 337, 433, 505])
+    raw = np.column_stack((np.arange(10.) + 10, np.arange(10.) + 1, np.full(10, np.nan)))
+    raw[1, 1] = np.nan
+    raw[2:4, 0] = np.nan
+    values, mask, ends = daily_records(
+        raw[::-1], times[::-1], 528, ['continuous', 'categorical', 'continuous'],
+        admitted_at='2020-01-01', forward_fill=forward_fill)
+    np.testing.assert_array_equal(ends, times[2:])
+    np.testing.assert_allclose(values[0], [11, 3, np.nan], equal_nan=True)
+    np.testing.assert_array_equal(mask[0], [True, True, False])
+    expected_missing = 11 if forward_fill else np.nan
+    np.testing.assert_allclose(values[1, 0], expected_missing, equal_nan=True)
+    assert not mask[1, 0]
+    np.testing.assert_allclose(values[2:], raw[4:], equal_nan=True)
+
+
+@pytest.mark.parametrize('count', [1, 7, 8, 12])
+def test_daily_window_has_at_most_eight_steps(count):
+    times = np.arange(count) * 24 + 1
+    values, _, ends = daily_records(np.arange(count).reshape(-1, 1), times, count * 24,
+                                    ['continuous'], admitted_at='2020-01-01')
+    assert len(values) == min(count, 8)
+    np.testing.assert_array_equal(ends, times[-8:])
+
+
+def test_last_value_is_per_feature_and_sorted_stably_by_measurement_time():
+    values, mask, ends = daily_records(
+        [[9, None], [2, 1], [8, 4], [None, 3]], [3, 1, 3, 2], 24,
+        ['continuous', 'categorical'], admitted_at='2020-01-01', forward_fill=False)
+    np.testing.assert_array_equal(values, [[8, 4]])
+    np.testing.assert_array_equal(mask, [[True, True]])
+    np.testing.assert_array_equal(ends, [3])
+
+
+@pytest.mark.parametrize('max_days', [0, -1, 1.5, True, float('nan')])
+def test_invalid_day_cap_rejected(max_days):
+    with pytest.raises(ValueError, match='max_days'):
+        daily_records([[1]], [1], 24, ['continuous'], admitted_at='2020-01-01', max_days=max_days)
+
+
+def test_invalid_daily_aggregation_rejected():
+    with pytest.raises(ValueError, match='continuous_agg'):
+        daily_records([[1]], [1], 24, ['continuous'], admitted_at='2020-01-01', continuous_agg='median')
 
 
 def test_missing_history_not_filled_from_later_day():
@@ -142,7 +194,7 @@ def test_target_day_excluded_from_llm_and_smart(dataset):
     np.testing.assert_array_equal(sample['X_ts'], changed['X_ts'])
     assert sample['input_visit_ids'] == ['2020-01-01', '2020-01-02', '2020-01-04', '2020-01-05']
     assert sample['target_visit_id'] == '2020-01-06'
-    np.testing.assert_array_equal(sample['X'][:, 1], [1, 4, 7, 9])
+    np.testing.assert_array_equal(sample['X'][:, 1], [1, 5, 7, 9])
     assert len(sample['X_ts']) == 4 and not sample['includes_target_visit']
 
 
@@ -157,6 +209,62 @@ def test_readmission_includes_index_icu_target_day_for_llm_and_smart():
     changed, _ = build_patient_history(record, 'mimic4_readmission', need_smart=True)
     assert changed['X'][-1, 0] == changed['X_ts'][-1, 0] == 23
     assert sample['record_time'][-1] == 108  # Last observation, before ICU discharge at 120h.
+
+
+@pytest.mark.parametrize('dataset,features', [('mimic3_mortality', 17), ('mimic3_los', 17),
+                                             ('mimic4_mortality', 44), ('mimic4_los', 44),
+                                             ('mimic4_readmission', 44)])
+def test_llm_preserves_internal_nan_while_smart_uses_locf(dataset, features):
+    from prompt.EHR_prompt.common import serialize_patient_record
+    record = patient_record(features=features)
+    record['icu_stays'][1]['values'][0] = [None] * features
+    original = copy.deepcopy(record)
+    sample, _ = build_patient_history(record, dataset, need_smart=True)
+    column = 1 if dataset.startswith('mimic3') else 0
+    np.testing.assert_allclose(sample['X'][:4, column], [1, 5, np.nan, 9], equal_nan=True)
+    np.testing.assert_array_equal(sample['X_ts'][:4, 0], [1, 5, 5, 9])
+    np.testing.assert_array_equal(sample['smart_observed_mask'][:4, 0], [True, True, False, True])
+    assert 'feature_0: [1.0, 5.0, NaN, 9.0' in serialize_patient_record(sample, dataset)
+    assert record == original
+
+
+@pytest.mark.parametrize('dataset,expected_steps', [('mimic3_mortality', 7), ('mimic3_los', 7),
+                                                  ('mimic4_readmission', 8)])
+def test_task_cutoff_applies_after_merged_history_window(dataset, expected_steps):
+    features = 17 if dataset.startswith('mimic3') else 44
+    record = patient_record(features=features)
+    record['hospital_admitted_at'] = '2020-01-01'
+    record['hospital_discharged_at'] = '2020-01-13'
+    record['icu_stays'] = [dict(
+        stay_id='a', admitted_at='2020-01-01', discharged_at='2020-01-13',
+        record_time=[24 * i + 1 for i in range(12)],
+        values=[[float(i)] * features for i in range(12)], icu_readmission_30d=0)]
+    sample, _ = build_patient_history(record, dataset, need_smart=True)
+    column = 1 if dataset.startswith('mimic3') else 0
+    np.testing.assert_array_equal(sample['X'][:, column], np.arange(4, 4 + expected_steps))
+    np.testing.assert_array_equal(sample['X_ts'][:, 0], sample['X'][:, column])
+    assert sample['record_time'][0] == 97  # End of the five-day merged initial step.
+    assert sample['target_visit_id'] == '2020-01-12'
+    assert len(sample['input_visit_ids']) == expected_steps
+
+
+@pytest.mark.parametrize('dataset', ['tjh_mortality', 'tjh_los'])
+def test_tjh_uses_daily_mean_without_day_cap_and_only_smart_fills_missing(dataset):
+    record = patient_record(features=75)
+    del record['icu_stays']
+    record.update(hospital_admitted_at='2020-01-01', hospital_discharged_at='2020-01-13',
+                  record_time=[hour for day in range(12) for hour in (24 * day + 1, 24 * day + 2)],
+                  values=[[float(value)] * 75 for _ in range(12) for value in (2, 4)])
+    record['values'][8:10] = [[None] * 75, [None] * 75]
+    sample, _ = build_patient_history(record, dataset, need_smart=True)
+    assert len(sample['X']) == len(sample['X_ts']) == 11  # All days except the final one.
+    assert sample['input_visit_ids'][0] == '2020-01-01'
+    expected = np.full(11, 3.)
+    expected[4] = np.nan
+    np.testing.assert_allclose(sample['X'][:, 0], expected, equal_nan=True)
+    np.testing.assert_array_equal(sample['X_ts'][:, 0], np.full(11, 3.))
+    assert not sample['smart_observed_mask'][4, 0]
+    assert sample['record_time'] == [24 * i + 2 for i in range(11)]
 
 
 def test_one_day_admission_allowed_only_for_readmission():
@@ -239,7 +347,8 @@ def test_history_route_prompt_and_frozen_encoder(tmp_path):
     torch.save({'encoder': Encoder(args).state_dict()}, tmp_path / 'checkpoint-mse.pth')
     splits = prepare_ehr_data(args, Mock())
     splits = transform_ehr_to_detail_prompt(args, *splits)
-    assert 'within one hospital admission' in splits[2]['detail'][0]
+    assert '- Number of measurements: 4' in splits[2]['detail'][0]
+    assert 'Visit index for each measurement:' not in splits[2]['detail'][0]
     assert '999999' not in splits[2]['detail'][0]
     splits = calculate_smart_embedding(args, *splits)
     assert args.smart_max_len == 4

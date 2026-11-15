@@ -16,13 +16,17 @@ from data.labels import hospital_los_hours, hospital_los_label, icu_readmission_
 from data.splits import fixed_train_val_test_split, normalize_patient_id
 
 
-def daily_records(values, times, duration_hours, feature_types, *, admitted_at):
-    """Daily mean/last categorical value, then LOCF; retain seven calendar days.
+def daily_records(values, times, duration_hours, feature_types, *, admitted_at,
+                  continuous_agg='last', max_days=7, forward_fill=True):
+    """Aggregate one admission's observations by calendar day.
 
-    Only observed days are materialized. LOCF uses earlier days of this admission,
-    including observations before the retained window. Returned times identify
-    the last measurement on each day, in hours from hospital admission. Calendar
-    boundaries use the admission timestamp's timezone, not elapsed 24-hour bins.
+    MIMIC uses the last recorded value of each variable per day, retains the
+    final ``max_days`` observed days, and merges all earlier observations into
+    one initial step. TJH uses the daily mean without a day cap. ``forward_fill``
+    applies LOCF within the admission for the encoder; without it, missing LLM
+    entries stay NaN. No unobserved days are materialized. Returned times mark
+    the last measurement of each step, in hours from hospital admission.
+    Calendar boundaries use the admission timestamp's timezone.
     """
     values = np.asarray(values, dtype=float)
     times = np.asarray(times, dtype=float)
@@ -34,6 +38,11 @@ def daily_records(values, times, duration_hours, feature_types, *, admitted_at):
         raise ValueError('Times must be finite and feature values cannot be infinite')
     if any(kind not in ('continuous', 'categorical') for kind in feature_types):
         raise ValueError('Feature types must be continuous or categorical')
+    if continuous_agg not in ('last', 'mean'):
+        raise ValueError('continuous_agg must be last or mean')
+    if max_days is not None and (isinstance(max_days, (bool, np.bool_)) or
+                                 not isinstance(max_days, (int, np.integer)) or max_days <= 0):
+        raise ValueError('max_days must be a positive integer or None')
     if np.any(times < 0) or np.any(times > duration_hours):
         raise ValueError('Measurements must fall inside the admission')
     origin = datetime.fromisoformat(admitted_at.replace('Z', '+00:00'))
@@ -41,21 +50,31 @@ def daily_records(values, times, duration_hours, feature_types, *, admitted_at):
     order = np.argsort(times, kind='stable')
     values, times = values[order], times[order]
     bins = np.floor((times + midnight_offset) / 24).astype(int)
-    first_day = int(bins[-1]) - 6
+    days = np.unique(bins)
+    if max_days is not None and len(days) > max_days:
+        split_day = days[-(max_days + 1)]
+        bins = np.where(bins <= split_day, split_day, bins)
+        days = np.unique(bins)
     carry = np.full(values.shape[1], np.nan)
     rows, masks, ends = [], [], []
-    for day in np.unique(bins):
+    for day in days:
+        in_day = bins == day
+        entries = values[in_day]
+        row = np.full(values.shape[1], np.nan)
         observed = np.zeros(values.shape[1], dtype=bool)
-        entries = values[bins == day]
         for column, kind in enumerate(feature_types):
             valid = entries[:, column][np.isfinite(entries[:, column])]
             if len(valid):
-                carry[column] = valid.mean() if kind == 'continuous' else valid[-1]
+                use_mean = kind == 'continuous' and continuous_agg == 'mean'
+                row[column] = valid.mean() if use_mean else valid[-1]
                 observed[column] = True
-        if day >= first_day:
+        if forward_fill:
+            carry = np.where(observed, row, carry)
             rows.append(carry.copy())
-            masks.append(observed)
-            ends.append(times[bins == day][-1])
+        else:
+            rows.append(row)
+        masks.append(observed)
+        ends.append(times[in_day][-1])
     return np.asarray(rows), np.asarray(masks), np.asarray(ends)
 
 
@@ -124,9 +143,10 @@ def _admission_measurements(record, dataset, schema, smart_schema):
 def build_patient_history(record, dataset, need_smart=False):
     """Build one admission sample; each visit is an observed calendar day.
 
-    Retain seven calendar days ending at the final observation. Mortality and
-    LOS withhold that final day. Readmission retains it through discharge of
-    the admission's last ICU stay. No other admission supplies input records.
+    MIMIC retains seven observed days plus a merged earlier-history step; TJH
+    retains all observed days. Mortality and LOS withhold the final day, while
+    readmission includes it through the last ICU stay's discharge. LLM missing
+    values stay NaN; SMART uses LOCF. No other admission supplies input records.
     """
     if dataset not in ('mimic3_mortality', 'mimic3_los', 'mimic4_mortality', 'mimic4_los',
                        'mimic4_readmission', 'tjh_mortality', 'tjh_los'):
@@ -144,7 +164,12 @@ def build_patient_history(record, dataset, need_smart=False):
             raise ValueError(f'{dataset} SMART input requires {input_dim} features in checkpoint order')
     raw, times, smart_raw, index_stay = _admission_measurements(record, dataset, (names, kinds), smart_schema)
     duration = hospital_los_hours(record['hospital_admitted_at'], record['hospital_discharged_at'])
-    values, _, daily_times = daily_records(raw, times, duration, kinds, admitted_at=record['hospital_admitted_at'])
+    is_mimic = dataset.startswith('mimic')
+    aggregation = dict(continuous_agg='last' if is_mimic else 'mean', max_days=7 if is_mimic else None)
+    # LLM input retains missing values, as in Appendix F.
+    values, _, daily_times = daily_records(raw, times, duration, kinds,
+                                          admitted_at=record['hospital_admitted_at'],
+                                          forward_fill=False, **aggregation)
     origin = datetime.fromisoformat(record['hospital_admitted_at'].replace('Z', '+00:00'))
     visit_ids = [(origin + timedelta(hours=float(t))).date().isoformat() for t in daily_times]
     target_visit_id = visit_ids[-1]
@@ -173,8 +198,10 @@ def build_patient_history(record, dataset, need_smart=False):
         'includes_target_visit': readmission,
     }
     if need_smart:
+        # Only the encoder input uses LOCF within this admission.
         smart, mask, smart_times = daily_records(smart_raw, times, duration, smart_schema[1],
-                                                admitted_at=record['hospital_admitted_at'])
+                                                admitted_at=record['hospital_admitted_at'],
+                                                forward_fill=True, **aggregation)
         sample['X_ts'] = smart[keep]
         sample['smart_observed_mask'] = mask[keep]
         if not np.array_equal(smart_times[keep], daily_times):

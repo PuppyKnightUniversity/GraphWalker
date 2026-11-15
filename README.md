@@ -91,27 +91,35 @@ are supplied by upstream outcome ascertainment, never inferred from input rows.
 Mortality is admission-level; LOS is derived from the hospital timestamps.
 
 A visit is an **observed calendar day within this admission**, not another
-admission or an elapsed 24-hour bin. Calendar boundaries use the hospital
-admission timestamp's timezone. Continuous features use the daily mean and
-categorical features the last observed value. Missing values are forward-filled
-using only earlier days in the same admission; leading missing values remain
-missing. Days with no measurement rows are not invented.
+admission or an elapsed 24-hour bin. Following the ClinicRealm preprocessing,
+MIMIC uses the last recorded value of each variable per day, and TJH uses the
+daily mean for continuous features (the last recorded value for categorical
+features). For MIMIC, the final seven observed days are kept and all earlier
+observations are merged into one initial step, giving at most eight steps.
+TJH retains all observed days without a day cap. Missing values are shown as
+NaN in the LLM input; the encoder input uses last observation carried forward
+(LOCF) within the same admission, with leading missing values left missing
+before normalization. Calendar boundaries use the hospital admission timestamp's
+timezone. Days with no measurement rows are not invented.
 
-Keep the seven-calendar-day window ending on the final observed day, then apply
-the task rule:
+After aggregation and the dataset-specific window rule, apply the task rule:
 
 | Task | Input | Label |
 |---|---|---|
 | Mortality | Retained days **before** the final observation day | Death during this hospital admission |
 | LOS | Retained days **before** the final observation day | Total hospital LOS bin |
-| ICU readmission | All retained ICU days **including** the final observation day, through index ICU discharge | New ICU admission within 30 days after index ICU discharge |
+| ICU readmission | All retained ICU days **including** the final observation day, through index ICU discharge | 30-day readmission outcome after index ICU discharge (ClinicRealm definition), supplied by upstream outcome ascertainment |
 
-Mortality/LOS records without an earlier observed day fail validation instead of
-silently changing the cohort. Measurement times serialized to the LLM are hours
-since hospital admission, identifying the last measurement of each observed day.
+Measurement times serialized to the LLM are hours since hospital admission,
+identifying the last measurement of each step (including the merged initial step).
 No target-day values enter either the LLM input or SMART input for mortality/LOS.
 For readmission, both representations include the target day. Post-discharge
 measurements are rejected.
+
+Prompt wording is preserved verbatim from the experiments (Appendix F).
+In that wording, a "visit" refers to an observed calendar day within an admission.
+For ICU readmission, the input additionally includes the final observation day
+as specified above; the original prompt text is retained for reproducibility.
 
 SMART uses the same daily rows and task cutoff. Supply features in checkpoint
 order (17 for MIMIC-III, 44 for MIMIC-IV). If LLM and SMART feature schemas differ,

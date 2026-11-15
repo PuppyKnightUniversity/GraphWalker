@@ -55,24 +55,37 @@ def test_scoring_and_task_inference_share_historical_records(dataset, few_shot):
     assert final.count(p['detail']) == (2 if few_shot else 1)
     assert 'SECRET_OUTCOME' not in final
     assert '[25.25, 82.50]' in final
-    assert 'Visit index for each measurement: [1, 2]' in final
-    assert 'hours since this hospital admission' in final
+    assert 'Visit index for each measurement:' not in final
+    assert 'hours since this hospital admission' not in final
+    assert 'The measurements describe daily visits' not in final
+    assert 'Records from the target visit and its outcome are not provided.' in final
+    assert "The target visit is the patient's final visit, and its records are excluded from the input." in final
     assert 'NaN' in final and 'nan' not in final
     assert 'Expert Model' not in final
     if dataset.endswith('_readmission'):
-        assert 'discharge from the index ICU stay' in final
-        assert 'including the final observation day' in final
-        assert 'measurements are excluded' not in final
-        assert 'Records from the target visit' not in final
+        assert 'discharge from the target ICU stay, using EHR records from preceding visits.' in final
+        assert 'including the final observation day' not in final
         assert 'new ICU admission' in final
         assert 'death' not in final and 'dies' not in final
     if few_shot:
+        assert "Each example contains that patient's historical records preceding their own target visit" in final
         assert ('Outcome Label: C' if dataset.endswith('_los') else 'Outcome Label: 1') in final
 
 
 def test_empty_selected_set_uses_zero_shot_template():
     p = patient('mimic3_mortality')
     assert wrapper('mimic3_mortality')(p, is_few_shot=True, icl_examples_list=[]) == build_ehr_prompt(p, 'mimic3_mortality')
+
+
+@pytest.mark.parametrize('dataset', ['mimic4_los', 'tjh_los'])
+def test_shared_los_template_preserves_original_task_description(dataset):
+    # These tasks expose the shared builder, without a separate inference wrapper.
+    text = build_ehr_prompt(patient(dataset), dataset)
+    assert ("You are tasked with predicting the patient's total hospital length of stay during the target "
+            "visit, using EHR records from preceding visits. The target visit is the patient's final visit, "
+            "and its records are excluded from the input.") in text
+    assert 'Records from the target visit and its outcome are not provided.' in text
+    assert 'Visit index for each measurement:' not in text
 
 
 def test_target_label_and_expert_logits_are_unused_by_default():
