@@ -2,23 +2,24 @@
 from pathlib import Path
 
 
-_MORTALITY_TASK = ("You are tasked with predicting whether the patient will die during the target visit, "
-                   "using EHR records from preceding visits. The target visit is the patient's final visit, "
-                   "and its records are excluded from the input.")
-_LOS_TASK = ("You are tasked with predicting the patient's total hospital length of stay during the target "
-             "visit, using EHR records from preceding visits. The target visit is the patient's final visit, "
-             "and its records are excluded from the input.")
+_MORTALITY_TASK = ("You are tasked with predicting whether the patient will die during this hospital admission. "
+                   "Each visit is one calendar day of observations within this admission. The target visit is "
+                   "its final observation day, whose measurements are excluded; use the preceding daily visits.")
+_LOS_TASK = ("You are tasked with predicting the total hospital length of stay for this admission. Each visit is one "
+             "calendar day of observations within this admission. The target visit is its final observation "
+             "day, whose measurements are excluded; use the preceding daily visits.")
 TASK_DESCRIPTION = {
     **{f'{dataset}_mortality': _MORTALITY_TASK for dataset in ('mimic3', 'mimic4', 'tjh')},
     **{f'{dataset}_los': _LOS_TASK for dataset in ('mimic3', 'mimic4', 'tjh')},
     'mimic4_readmission': (
         'You are tasked with predicting whether the patient will be readmitted to the ICU within 30 days '
-        'after discharge from the target ICU stay, using EHR records from preceding visits. The target '
-        "visit is the patient's final visit, and its records are excluded from the input."),
+        'after discharge from the index ICU stay (the last ICU stay of this hospital admission). '
+        'Use the retained daily ICU observations from this admission through index ICU discharge, '
+        'including the final observation day. No post-discharge or other-admission records are provided.'),
 }
 
 _MORTALITY_RESPONSE = '''\
-Provide only a floating-point number between 0 and 1 representing the predicted probability of in-hospital mortality during the target visit. A higher value indicates a higher probability of death.
+Provide only a floating-point number between 0 and 1 representing the predicted probability of mortality during this hospital admission. A higher value indicates a higher probability of death.
 Do not provide any reasoning, explanation, or additional text. Output only the numerical value.
 Example: 0.XX'''
 _LOS_RESPONSE = '''\
@@ -44,11 +45,15 @@ UNIT = {name: str(_RESOURCE_DIR / 'mimic3_unit.json')
 REFERENCE_RANGE = {name: str(_RESOURCE_DIR / 'mimic3_range.json')
                    for name in ('mimic3_mortality', 'mimic3_los')}
 
-_HISTORY_INTRO = '''\
-You will be provided with longitudinal electronic health record (EHR) data from a patient's visits preceding the final visit. We refer to the final visit as the target visit. Records from the target visit and its outcome are not provided.
-Each clinical feature is represented as a time-ordered sequence of measurements from the preceding visits. Missing values are denoted as NaN. Units and reference ranges are provided where applicable.
+HISTORY_INTRO = '''\
+You will be provided with electronic health record (EHR) data from one hospital admission. A visit is one observed calendar day, not a separate admission. The final observation day is the target visit; its measurements and the admission outcome are not provided. The input contains preceding daily visits from the retained seven-day window. MIMIC records contain only ICU measurements; TJH records contain laboratory measurements. Records from other admissions are not included.
+Each clinical feature is a time-ordered sequence of daily measurements. Missing values are denoted as NaN. Units and reference ranges are provided where applicable.
 '''
-USERPROMPT_ZERO_SHOT = _HISTORY_INTRO + '''\
+READMISSION_INTRO = '''\
+You will be provided with ICU electronic health record (EHR) data from one hospital admission. A visit is one observed calendar day, not a separate admission. The input contains daily observations from the retained seven-day window through discharge of the last ICU stay, including the final observation day. No post-discharge records, other-admission records, or readmission outcome are provided.
+Each clinical feature is a time-ordered sequence of daily measurements. Missing values are denoted as NaN. Units and reference ranges are provided where applicable.
+'''
+USERPROMPT_ZERO_SHOT = HISTORY_INTRO + '''\
 Use the provided historical records to predict the specified outcome associated with the target visit.
 
 Task Description:
@@ -62,8 +67,8 @@ Target Patient's Historical Records:
 
 Your Answer:'''
 
-USERPROMPT_FEW_SHOT = _HISTORY_INTRO + '''\
-You will also receive selected examples from other patients. Each example contains that patient's historical records preceding their own target visit, together with the known outcome associated with that visit. Use these examples and the target patient's historical records to predict the specified outcome for the target patient.
+USERPROMPT_FEW_SHOT = HISTORY_INTRO + '''\
+You will also receive selected examples from other patients. Each example contains daily records from one hospital admission, using the same observation window and target-day inclusion rule as the target patient, together with the known task-specific outcome. Use these examples and the target patient's records to predict the specified outcome.
 
 Task Description:
 {TASK_DESCRIPTION}

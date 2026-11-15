@@ -146,7 +146,7 @@ def test_graph_hyperparameter_defaults(monkeypatch):
     monkeypatch.setattr(sys, 'argv', ['main.py'])
     args = parse_args()
     assert args.graph_walker_mode == 'frontiers-full-greedy'
-    assert args.ehr_protocol == 'historical_visits'
+    assert args.ehr_protocol == 'admission_daily'
     assert (args.graph_walker_neighbor_num, args.graph_walker_top_l_cohorts,
             args.graph_walker_top_k_per_cohort, args.graph_walker_leiden_resolution) == (8, 3, 3, 1.0)
 

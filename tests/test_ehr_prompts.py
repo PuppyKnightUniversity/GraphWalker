@@ -23,8 +23,9 @@ def patient(dataset):
         values = np.column_stack((times, values))
         names = ['Hours'] + names
     return dict(X=values, header=names, record_time=times, t=2, y='SECRET_OUTCOME',
-                data_protocol='historical_visits', input_visit_ids=['old_a', 'old_b'],
-                row_visit_ids=['old_a', 'old_b'], name='patient')
+                data_protocol='admission_daily', input_visit_ids=['day_a', 'day_b'],
+                row_visit_ids=['day_a', 'day_b'], name='patient',
+                includes_target_visit=dataset.endswith('_readmission'))
 
 
 def wrapper(dataset):
@@ -55,11 +56,14 @@ def test_scoring_and_task_inference_share_historical_records(dataset, few_shot):
     assert 'SECRET_OUTCOME' not in final
     assert '[25.25, 82.50]' in final
     assert 'Visit index for each measurement: [1, 2]' in final
-    assert 'hours since the first historical admission' in final
+    assert 'hours since this hospital admission' in final
     assert 'NaN' in final and 'nan' not in final
     assert 'Expert Model' not in final
     if dataset.endswith('_readmission'):
-        assert 'discharge from the target ICU stay' in final
+        assert 'discharge from the index ICU stay' in final
+        assert 'including the final observation day' in final
+        assert 'measurements are excluded' not in final
+        assert 'Records from the target visit' not in final
         assert 'new ICU admission' in final
         assert 'death' not in final and 'dies' not in final
     if few_shot:
@@ -100,7 +104,7 @@ def test_expert_probabilities_are_optional_and_outside_record_loss(dataset):
 def test_single_stay_input_cannot_be_described_as_preceding_visits():
     p = patient('mimic4_readmission')
     p['data_protocol'] = 'single_stay'
-    with pytest.raises(ValueError, match='preceding visits'):
+    with pytest.raises(ValueError, match='daily visits'):
         build_ehr_prompt(p, 'mimic4_readmission')
 
 

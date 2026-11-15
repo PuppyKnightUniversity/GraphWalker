@@ -74,7 +74,7 @@ def fixed_train_val_test_split(args, patient_all, dataset):
     split_seed = getattr(args, 'data_split_seed', 3407)
     protocol = getattr(args, 'ehr_protocol', 'single_stay')
     out = Path(args.mid_data_dump_path) / dataset / (
-        f'split_v3_subjects_{protocol}_seed{split_seed}_period{args.period_length}_train{args.train_ratio:g}')
+        f'split_v4_subjects_{protocol}_seed{split_seed}_period{args.period_length}_train{args.train_ratio:g}')
     out.mkdir(parents=True, exist_ok=True)
     for name, split in zip(('train', 'val', 'test'), splits):
         with (out / f'{dataset}_{name}.pkl').open('wb') as stream:

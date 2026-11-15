@@ -6,12 +6,12 @@ def prepare_ehr_data(args, logger=None):
     
     logger.data_preparation_start(args.dataset)
     
-    protocol = getattr(args, 'ehr_protocol', 'historical_visits')
-    if protocol not in ('historical_visits', 'single_stay'):
+    protocol = getattr(args, 'ehr_protocol', 'admission_daily')
+    if protocol not in ('admission_daily', 'single_stay'):
         raise ValueError(f'Unknown EHR protocol: {protocol}')
     if protocol == 'single_stay' and getattr(args, 'ehr_records_path', None):
-        raise ValueError('--ehr_records_path requires --ehr_protocol historical_visits')
-    if protocol == 'historical_visits':
+        raise ValueError('--ehr_records_path requires --ehr_protocol admission_daily')
+    if protocol == 'admission_daily':
         from data.longitudinal import prepare_longitudinal_data
         train_data, val_data, test_data = prepare_longitudinal_data(args)
     elif args.dataset == "mimic3_mortality":

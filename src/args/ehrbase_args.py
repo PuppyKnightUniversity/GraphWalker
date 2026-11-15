@@ -30,8 +30,11 @@ def parse_args():
                                                                                     'cmb_clin',
                                                                                     'medqa'], help="Dataset to use")
     parser.add_argument("--dataset_path", type=str, default=None, help="Dataset path")
-    parser.add_argument('--ehr_protocol', choices=['historical_visits', 'single_stay'], default='historical_visits', help='Predict the final visit from earlier visits, or use single-stay benchmark inputs')
-    parser.add_argument('--ehr_records_path', help='Patient JSONL path; defaults to dataset_path/longitudinal.jsonl')
+    parser.add_argument('--ehr_protocol', choices=['admission_daily', 'single_stay'], default='admission_daily', help='Daily observations within one hospital admission, or legacy single-stay benchmark inputs')
+    parser.add_argument('--ehr_records_path', help='Admission JSONL path; defaults to dataset_path/longitudinal.jsonl')
+    parser.add_argument('--clinical_case_id_field', default='case_id', help='Clinical case identifier shared by every CMB-Clin question about that case')
+    parser.add_argument('--cmb_clin_split_sizes', nargs=3, type=int, default=[83, 42, 83], metavar=('TRAIN', 'VAL', 'TEST'), help='CMB-Clin question counts, with cases kept intact')
+    parser.add_argument('--cmb_clin_split_manifest', help='Optional JSON case-ID split manifest to reuse for CMB-Clin')
     parser.add_argument('--patient_id_field', help='Patient identifier field in processed single-stay records')
     parser.add_argument('--hospital_los_path', help='CSV with name, hospital_admitted_at, hospital_discharged_at for MIMIC-III single-stay LOS')
     parser.add_argument("--period_length", type=int, default=48, help="Single-stay observation window in hours")

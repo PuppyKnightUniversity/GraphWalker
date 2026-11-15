@@ -49,8 +49,8 @@ def validate_detail_prompt_lengths(logger, *datasets, max_tokens=10000):
 
 def transform_ehr_to_detail_prompt(args, train_dataset, val_dataset, test_dataset) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     from prompt.EHR_prompt.common import serialize_patient_record
-    if getattr(args, 'ehr_protocol', 'historical_visits') != 'historical_visits':
-        raise ValueError('Historical EHR prompts require --ehr_protocol historical_visits')
+    if getattr(args, 'ehr_protocol', 'admission_daily') != 'admission_daily':
+        raise ValueError('Daily admission prompts require --ehr_protocol admission_daily')
     for dataset in (train_dataset, val_dataset, test_dataset):
         dataset['detail'] = [
             serialize_patient_record(

@@ -29,12 +29,15 @@ def measurement_times(patient, dataset):
 
 
 def history_context(patient):
-    if patient.get('data_protocol') != 'historical_visits':
+    if patient.get('data_protocol') != 'admission_daily':
         return ''
     visits = {visit: i + 1 for i, visit in enumerate(patient['input_visit_ids'])}
     indices = [visits[visit] for visit in patient['row_visit_ids']]
-    return ('The measurements describe visits preceding the target visit.\n'
-            'Measurement times are hours since the first historical admission.\n'
+    window = ('including the final observation day through index ICU discharge'
+              if patient.get('includes_target_visit', False)
+              else 'excluding the final observation day')
+    return (f'The measurements describe daily visits within one hospital admission, {window}.\n'
+            'Measurement times are hours since this hospital admission.\n'
             f'Visit index for each measurement: {indices}\n\n')
 
 
@@ -93,14 +96,19 @@ def build_ehr_prompt(patient, dataset, examples=(), *, is_few_shot=None,
         raise ValueError(f'Unsupported EHR task: {dataset}')
     if inference_type != 'only_answer':
         raise ValueError(f'Unsupported inference type: {inference_type}')
-    if patient.get('data_protocol', 'historical_visits') != 'historical_visits':
-        raise ValueError('Historical EHR prompts require preceding visits with the target visit excluded')
+    if patient.get('data_protocol', 'admission_daily') != 'admission_daily':
+        raise ValueError('EHR prompts require daily visits within one hospital admission')
+    readmission = dataset.endswith('_readmission')
+    if 'includes_target_visit' in patient and patient['includes_target_visit'] != readmission:
+        raise ValueError('Target-day inclusion does not match the prediction task')
     examples = list(examples or ())
     few_shot = bool(examples) if is_few_shot is None else is_few_shot and bool(examples)
     rendered = []
     for index, example in enumerate(examples if few_shot else (), 1):
-        if example.get('data_protocol', 'historical_visits') != 'historical_visits':
-            raise ValueError('Demonstrations require historical visits')
+        if example.get('data_protocol', 'admission_daily') != 'admission_daily':
+            raise ValueError('Demonstrations require daily admission records')
+        if 'includes_target_visit' in example and example['includes_target_visit'] != readmission:
+            raise ValueError('Demonstration target-day inclusion does not match the prediction task')
         detail = example.get('detail')
         if detail is None:
             detail = serialize_patient_record(example, dataset, unit, reference_range)
@@ -111,6 +119,9 @@ def build_ehr_prompt(patient, dataset, examples=(), *, is_few_shot=None,
         text += '\nOutcome Label: ' + format_icl_label(label, dataset)
         rendered.append(text)
     template = (USERPROMPT_FEW_SHOT_SMART_WITH_LOGITS if add_smart_logits else USERPROMPT_FEW_SHOT) if few_shot else USERPROMPT_ZERO_SHOT
+    if readmission:
+        from prompt.EHR_prompt.prompt_template import HISTORY_INTRO, READMISSION_INTRO
+        template = template.replace(HISTORY_INTRO, READMISSION_INTRO)
     before, separator, after = template.partition('{TARGET_RECORD}')
     if not separator or '{TARGET_RECORD}' in after:
         raise ValueError('Prompt template requires exactly one target-record field')

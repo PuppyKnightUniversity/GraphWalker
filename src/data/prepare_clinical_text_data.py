@@ -9,7 +9,8 @@ def prepare_clinical_text_data_extract_from_raw(args, logger=None):
     Extract clinical text data from raw data
     '''
     raw_data_path = args.mid_data_dump_path + f'/{args.dataset}/{args.dataset}_raw.pkl'
-    if os.path.exists(raw_data_path):
+    # CMB-Clin must read current case IDs, never an old question-only cache.
+    if args.dataset != 'cmb_clin' and os.path.exists(raw_data_path):
         if logger:
             logger.info(f'Loading {args.dataset} data from directory: {raw_data_path}')
         else:
@@ -28,19 +29,15 @@ def prepare_clinical_text_data_extract_from_raw(args, logger=None):
         
         # Load JSONL file (each line is a JSON object)
         with open(data_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
+            lines = [line for line in f if line.strip()]
         
-        # Get all keys from the first line to initialize the dictionary
-        if len(lines) > 0:
-            first_item = json.loads(lines[0])
-            for key in first_item.keys():
-                data_all[key] = []
-        
-        # Load all data
-        for line in lines:
-            item = json.loads(line.strip())
-            for key in data_all.keys():
-                data_all[key].append(item.get(key, None))
+        records = [json.loads(line) for line in lines]
+        if not records or any(not isinstance(item, dict) for item in records):
+            raise ValueError('Clinical text JSONL must contain nonempty question objects')
+        # Keep fields present on any row so a missing first-row case ID cannot
+        # silently erase the grouping key for all subsequent rows.
+        for key in dict.fromkeys(key for item in records for key in item):
+            data_all[key] = [item.get(key) for item in records]
         
         # Dump the raw data
         if not os.path.exists(os.path.dirname(raw_data_path)):
@@ -58,6 +55,9 @@ def prepare_clinical_text_data_train_val_test_split(args, data_all, logger=None)
     '''
     Split the data into train, val, and test sets
     '''
+    if args.dataset == 'cmb_clin':
+        from data.cmb_clin_splits import split_cmb_clin
+        return split_cmb_clin(args, data_all, logger)
     split_data_path = args.mid_data_dump_path + f'/{args.dataset}/seed{args.seed}'
     if os.path.exists(split_data_path):
         train_data = pickle.load(open(split_data_path + f'/{args.dataset}_train.pkl', 'rb'))

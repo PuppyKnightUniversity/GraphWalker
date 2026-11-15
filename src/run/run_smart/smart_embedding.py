@@ -93,7 +93,7 @@ def calculate_smart_embedding(args, train_dataset, val_dataset, test_dataset):
     else:
         raise ValueError(f"Dataset {args.dataset} not supported for SMART embedding calculation")        
 
-    if getattr(args, 'ehr_protocol', None) == 'historical_visits':
+    if getattr(args, 'ehr_protocol', None) == 'admission_daily':
         args.smart_max_len = max(sample['lens'] for split in (train_dataset, val_dataset, test_dataset)
                                  for sample in split['data_smart'])
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

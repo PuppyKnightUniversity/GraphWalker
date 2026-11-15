@@ -17,26 +17,26 @@ from data.splits import fixed_train_val_test_split, processed_patient_id
 def split_args(tmp_path, **kwargs):
     values = dict(train_ratio=.8, data_split_seed=3407, seed=1, period_length=48,
                   mid_data_dump_path=str(tmp_path / 'cache'), dataset_path=str(tmp_path),
-                  dataset='mimic3_los', ehr_protocol='historical_visits',
+                  dataset='mimic3_los', ehr_protocol='admission_daily',
                   ehr_records_path=None, embedding_model_name=None,
                   method='graph_walker', toy_dataset=False)
     return SimpleNamespace(**dict(values, **kwargs))
 
 
-def patient_record(subject=1):
+def patient_record(subject=1, hadm=None, features=17):
     return {
-        'subject_id': subject,
-        'feature_names': [f'feature_{i}' for i in range(17)],
-        'feature_types': ['continuous'] * 17,
-        'visits': [
-            {'visit_id': 'a', 'admitted_at': '2020-01-01', 'discharged_at': '2020-01-11',
-             'record_time': [1, 50, 240], 'values': [[1.] * 17, [3.] * 17, [5.] * 17]},
-            {'visit_id': 'b', 'admitted_at': '2020-02-01', 'discharged_at': '2020-02-03',
-             'record_time': [1], 'values': [[9.] * 17]},
-            {'visit_id': 'c', 'admitted_at': '2020-03-01', 'discharged_at': '2020-03-02',
-             'hospital_admitted_at': '2020-03-01', 'hospital_discharged_at': '2020-03-05',
-             'mortality': 1, 'icu_readmission_30d': 0,
-             'values': [[999999.] * 17], 'record_time': [1]},
+        'subject_id': subject, 'hadm_id': hadm if hadm is not None else f'admission-{subject}',
+        'hospital_admitted_at': '2020-01-01T12:00:00',
+        'hospital_discharged_at': '2020-01-07T12:00:00', 'mortality': 1,
+        'feature_names': [f'feature_{i}' for i in range(features)],
+        'feature_types': ['continuous'] * features,
+        'icu_stays': [
+            {'stay_id': 'a', 'admitted_at': '2020-01-01T12:00:00', 'discharged_at': '2020-01-03T12:00:00',
+             'record_time': [1, 12, 25], 'values': [[1.] * features, [3.] * features, [5.] * features],
+             'icu_readmission_30d': 1},
+            {'stay_id': 'b', 'admitted_at': '2020-01-04T12:00:00', 'discharged_at': '2020-01-06T12:00:00',
+             'record_time': [1, 24, 36], 'values': [[7.] * features, [9.] * features, [999999.] * features],
+             'icu_readmission_30d': 0},
         ],
     }
 
@@ -91,73 +91,125 @@ def test_invalid_los_durations(hours):
         los_bin_from_hours(hours)
 
 
-def test_los_uses_hospital_interval():
-    target = patient_record()['visits'][-1]
-    target['y_los'] = 0
-    assert hospital_los_label(target) == 1
+def test_los_uses_total_hospital_interval():
+    record = patient_record()
+    record['y_los'] = 0
+    assert hospital_los_label(record) == 1
+    sample, _ = build_patient_history(record, 'mimic3_los')
+    assert sample['y'] == 1  # Six hospital days, not a two-day ICU stay.
     with pytest.raises(ValueError, match='hospital_admitted_at'):
         hospital_los_label({'y_los': 0})
-    target['hospital_discharged_at'] = '2019-01-01'
-    with pytest.raises(ValueError):
-        hospital_los_label(target)
 
 
 def test_daily_aggregation_and_forward_fill():
     values, mask, times = daily_records(
         [[2, 1], [4, 3], [None, None], [8, 4]], [1, 2, 49, 73], 96,
-        ['continuous', 'categorical'])
-    np.testing.assert_allclose(values, [[3, 3], [3, 3], [3, 3], [8, 4]])
-    np.testing.assert_array_equal(mask[:, 0], [True, False, False, True])
-    np.testing.assert_array_equal(times, [24, 48, 72, 96])
+        ['continuous', 'categorical'], admitted_at='2020-01-01')
+    np.testing.assert_allclose(values, [[3, 3], [3, 3], [8, 4]])
+    np.testing.assert_array_equal(mask[:, 0], [True, False, True])
+    np.testing.assert_array_equal(times, [2, 49, 73])
 
 
-def test_last_seven_days_keep_earlier_forward_fill():
-    values, _, times = daily_records([[5], [9]], [1, 217], 240, ['continuous'])
-    assert values.shape == (7, 1)
-    np.testing.assert_array_equal(times, [96, 120, 144, 168, 192, 216, 240])
-    np.testing.assert_array_equal(values[:, 0], [5, 5, 5, 5, 5, 5, 9])
+@pytest.mark.parametrize('origin', ['2020-01-01T23:00:00', '2020-01-01T23:00:00+08:00'])
+def test_calendar_days_not_elapsed_24_hour_bins(origin):
+    values, _, times = daily_records([[2], [4], [8]], [.5, 1, 2], 24,
+                                     ['continuous'], admitted_at=origin)
+    np.testing.assert_array_equal(values[:, 0], [2, 6])
+    np.testing.assert_array_equal(times, [.5, 2])
+
+
+def test_last_seven_calendar_days_keep_earlier_locf_without_inventing_days():
+    values, mask, times = daily_records([[5], [None], [9]], [1, 73, 217], 240,
+                                       ['continuous'], admitted_at='2020-01-01')
+    np.testing.assert_array_equal(times, [73, 217])
+    np.testing.assert_array_equal(values[:, 0], [5, 9])
+    np.testing.assert_array_equal(mask[:, 0], [False, True])
 
 
 def test_missing_history_not_filled_from_later_day():
-    values, _, _ = daily_records([[None], [4]], [1, 25], 48, ['continuous'])
+    values, _, _ = daily_records([[None], [4]], [1, 25], 48, ['continuous'], admitted_at='2020-01-01')
     assert np.isnan(values[0, 0]) and values[1, 0] == 4
 
 
-def test_target_measurements_excluded_from_history():
+@pytest.mark.parametrize('dataset', ['mimic3_mortality', 'mimic3_los'])
+def test_target_day_excluded_from_llm_and_smart(dataset):
     record = patient_record()
-    sample, _ = build_patient_history(record, 'mimic3_los', need_smart=True)
-    record['visits'][-1]['values'] = 'not a measurement matrix'
-    record['visits'][-1]['record_time'] = None
-    record['visits'].reverse()
-    changed, _ = build_patient_history(record, 'mimic3_los', need_smart=True)
+    sample, _ = build_patient_history(record, dataset, need_smart=True)
+    record['icu_stays'][-1]['values'][-1] = [-123456.] * 17
+    record['icu_stays'].reverse()
+    changed, _ = build_patient_history(record, dataset, need_smart=True)
     np.testing.assert_array_equal(sample['X'], changed['X'])
     np.testing.assert_array_equal(sample['X_ts'], changed['X_ts'])
-    assert sample['input_visit_ids'] == ['a', 'b']
-    assert sample['target_visit_id'] == 'c' and 'c' not in sample['row_visit_ids']
-    assert len(sample['X']) == 9 and sample['y'] == 1
+    assert sample['input_visit_ids'] == ['2020-01-01', '2020-01-02', '2020-01-04', '2020-01-05']
+    assert sample['target_visit_id'] == '2020-01-06'
+    np.testing.assert_array_equal(sample['X'][:, 1], [1, 4, 7, 9])
+    assert len(sample['X_ts']) == 4 and not sample['includes_target_visit']
 
 
-@pytest.mark.parametrize('change', ['single_visit', 'duplicate', 'overlap', 'other_patient', 'hospital_interval'])
-def test_invalid_visit_history(change):
+def test_readmission_includes_index_icu_target_day_for_llm_and_smart():
+    record = patient_record(features=44)
+    sample, _ = build_patient_history(record, 'mimic4_readmission', need_smart=True)
+    assert sample['y'] == 0  # Last ICU stay, not the first stay's label of 1.
+    assert sample['target_visit_id'] in sample['input_visit_ids']
+    assert sample['includes_target_visit'] and sample['X'][-1, 0] == 999999
+    assert sample['X_ts'][-1, 0] == 999999
+    record['icu_stays'][-1]['values'][-1] = [23.] * 44
+    changed, _ = build_patient_history(record, 'mimic4_readmission', need_smart=True)
+    assert changed['X'][-1, 0] == changed['X_ts'][-1, 0] == 23
+    assert sample['record_time'][-1] == 108  # Last observation, before ICU discharge at 120h.
+
+
+def test_one_day_admission_allowed_only_for_readmission():
     record = patient_record()
-    if change == 'single_visit':
-        record['visits'] = record['visits'][-1:]
-    elif change == 'duplicate':
-        record['visits'][1]['visit_id'] = 'a'
+    record['icu_stays'] = [record['icu_stays'][-1]]
+    record['icu_stays'][0]['record_time'] = [1]
+    record['icu_stays'][0]['values'] = [[7.] * 17]
+    sample, _ = build_patient_history(record, 'mimic4_readmission')
+    assert len(sample['X']) == 1
+    with pytest.raises(ValueError, match='preceding'):
+        build_patient_history(record, 'mimic3_mortality')
+
+
+@pytest.mark.parametrize('change', ['legacy', 'duplicate_stay', 'overlap', 'other_patient', 'other_admission', 'outside_hospital', 'post_discharge'])
+def test_invalid_admission_records(change):
+    record = patient_record()
+    stay = record['icu_stays'][-1]
+    if change == 'legacy':
+        record['visits'] = record.pop('icu_stays')
+    elif change == 'duplicate_stay':
+        stay['stay_id'] = 'a'
     elif change == 'overlap':
-        record['visits'][1]['admitted_at'] = '2020-01-05'
+        stay['admitted_at'] = '2020-01-02'
     elif change == 'other_patient':
-        record['visits'][0]['subject_id'] = 2
+        stay['subject_id'] = 2
+    elif change == 'other_admission':
+        stay['hadm_id'] = 'another-admission'
+    elif change == 'outside_hospital':
+        stay['discharged_at'] = '2020-01-08'
     else:
-        record['visits'][-1]['hospital_admitted_at'] = '2020-03-01T12:00:00'
+        stay['record_time'][-1] = 49
     with pytest.raises(ValueError):
         build_patient_history(record, 'mimic3_los')
+
+
+def test_multiple_admissions_are_separate_samples_in_one_patient_split(tmp_path):
+    records = [patient_record(i, f'{i}-{j}') for i in range(10) for j in range(2)]
+    records[1]['icu_stays'][0]['values'][0] = [111.] * 17
+    write_patients(tmp_path / 'longitudinal.jsonl', records)
+    splits = prepare_longitudinal_data(split_args(tmp_path))
+    owners, inputs = {}, {}
+    for split_index, split in enumerate(splits):
+        for subject, hadm, values in zip(split['subject_id'], split['hadm_id'], split['X']):
+            assert owners.setdefault(subject, split_index) == split_index
+            inputs[hadm] = values
+    assert len(inputs) == 20
+    assert inputs['0-0'][0, 1] == 1 and inputs['0-1'][0, 1] == 111
 
 
 def test_history_scaling_uses_training_patients_only(tmp_path):
     path = tmp_path / 'longitudinal.jsonl'
     records = [patient_record(i) for i in range(20)]
-    records[0]['visits'][0]['values'][0][0] = None
+    records[0]['icu_stays'][0]['values'][0][0] = None
     write_patients(path, records)
     args = split_args(tmp_path, embedding_model_name='smart')
     splits = prepare_longitudinal_data(args)
@@ -165,8 +217,8 @@ def test_history_scaling_uses_training_patients_only(tmp_path):
     original_train = copy.deepcopy(splits[0]['data_smart'])
     for record in records:
         if str(record['subject_id']) in held_out:
-            for visit in record['visits'][:-1]:
-                visit['values'] = [[1e6] * 17 for _ in visit['values']]
+            for stay in record['icu_stays']:
+                stay['values'] = [[1e6] * 17 for _ in stay['values']]
     write_patients(path, records)
     changed = prepare_longitudinal_data(args)
     assert changed[0]['data_smart'] == original_train
@@ -187,10 +239,10 @@ def test_history_route_prompt_and_frozen_encoder(tmp_path):
     torch.save({'encoder': Encoder(args).state_dict()}, tmp_path / 'checkpoint-mse.pth')
     splits = prepare_ehr_data(args, Mock())
     splits = transform_ehr_to_detail_prompt(args, *splits)
-    assert 'visits preceding the target visit' in splits[2]['detail'][0]
+    assert 'within one hospital admission' in splits[2]['detail'][0]
     assert '999999' not in splits[2]['detail'][0]
     splits = calculate_smart_embedding(args, *splits)
-    assert args.smart_max_len == 9
+    assert args.smart_max_len == 4
     for split in splits:
         assert split['smart_embedding'].shape == (len(split['y']), 68)
         assert torch.isfinite(split['smart_embedding']).all()
@@ -198,7 +250,7 @@ def test_history_route_prompt_and_frozen_encoder(tmp_path):
 
 def test_no_implicit_fallback_to_single_stay(tmp_path):
     args = split_args(tmp_path)
-    with pytest.raises(FileNotFoundError, match='Patient JSONL'):
+    with pytest.raises(FileNotFoundError, match='Admission JSONL'):
         prepare_ehr_data(args, Mock())
     args.ehr_protocol = 'single_stay'
     args.ehr_records_path = 'history.jsonl'
@@ -206,10 +258,10 @@ def test_no_implicit_fallback_to_single_stay(tmp_path):
         prepare_ehr_data(args, Mock())
 
 
-def test_duplicate_subject_records_rejected(tmp_path):
+def test_duplicate_admission_records_rejected(tmp_path):
     path = tmp_path / 'longitudinal.jsonl'
-    write_patients(path, [patient_record(1), patient_record('001')])
-    with pytest.raises(ValueError, match='exactly one'):
+    write_patients(path, [patient_record(1), patient_record('001', 'admission-1')])
+    with pytest.raises(ValueError, match='Each hadm_id'):
         prepare_longitudinal_data(split_args(tmp_path))
 
 
