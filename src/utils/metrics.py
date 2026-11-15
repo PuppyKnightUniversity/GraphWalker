@@ -6,42 +6,33 @@ from sklearn import metrics
 
 
 def print_metrics_multilabel(y_true, predictions, verbose=True):
-    # 确保是torch tensor
     if not isinstance(y_true, torch.Tensor):
         y_true = torch.tensor(y_true)
     if not isinstance(predictions, torch.Tensor):
         predictions = torch.tensor(predictions)
     
     if len(y_true.shape) == 1:
-        # 多分类任务：根据predictions的形状确定类别数
         if len(predictions.shape) == 2:
             num_classes = predictions.shape[1]
             y_true = F.one_hot(y_true.long(), num_classes)
             predictions = predictions.softmax(dim=-1)
         else:
-            # 如果predictions也是1D，可能是多标签任务，使用sigmoid
             predictions = predictions.sigmoid()
     else:
-        # 多标签任务：y_true已经是one-hot或multi-hot
         predictions = predictions.sigmoid()
     y_true = np.array(y_true)
     predictions = np.array(predictions)
 
-    # 添加调试信息：检查标签和预测分布
     if verbose:
-        # 如果是多分类（one-hot编码的y_true）
         if len(y_true.shape) == 2:
             y_true_classes = np.argmax(y_true, axis=1)
             pred_classes = np.argmax(predictions, axis=1)
             logging.info("Label distribution: {}".format(np.bincount(y_true_classes)))
             logging.info("Prediction distribution: {}".format(np.bincount(pred_classes, minlength=y_true.shape[1])))
-            # 计算准确率
             accuracy = np.mean(y_true_classes == pred_classes)
             logging.info("Accuracy = {:.4f}".format(accuracy))
-            # 打印混淆矩阵
             cm = metrics.confusion_matrix(y_true_classes, pred_classes)
             logging.info("Confusion Matrix:\n{}".format(cm))
-            # 计算每个类别的精确率、召回率和F1分数
             precision_per_class = metrics.precision_score(y_true_classes, pred_classes, average=None, zero_division=0)
             recall_per_class = metrics.recall_score(y_true_classes, pred_classes, average=None, zero_division=0)
             f1_per_class = metrics.f1_score(y_true_classes, pred_classes, average=None, zero_division=0)
@@ -49,7 +40,6 @@ def print_metrics_multilabel(y_true, predictions, verbose=True):
             logging.info("Per-class Recall: {}".format([f"{r:.4f}" for r in recall_per_class]))
             logging.info("Per-class F1-Score: {}".format([f"{f:.4f}" for f in f1_per_class]))
         else:
-            # 多标签情况
             logging.info("y_true shape: {}, predictions shape: {}".format(y_true.shape, predictions.shape))
 
     auc_scores = metrics.roc_auc_score(y_true, predictions, average=None)
@@ -81,7 +71,6 @@ def print_metrics_binary(y_true, predictions, verbose=True):
 
     cf = metrics.confusion_matrix(y_true, predictions.argmax(axis=1))
     if verbose:
-        # logging.info("confusion matrix:")
         logging.info(cf)
     cf = cf.astype(np.float32)
 

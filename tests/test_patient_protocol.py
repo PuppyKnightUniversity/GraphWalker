@@ -96,7 +96,7 @@ def test_los_uses_total_hospital_interval():
     record['y_los'] = 0
     assert hospital_los_label(record) == 1
     sample, _ = build_patient_history(record, 'mimic3_los')
-    assert sample['y'] == 1  # Six hospital days, not a two-day ICU stay.
+    assert sample['y'] == 1
     with pytest.raises(ValueError, match='hospital_admitted_at'):
         hospital_los_label({'y_los': 0})
 
@@ -132,7 +132,6 @@ def test_sparse_observed_days_are_kept_without_inventing_calendar_days():
 
 @pytest.mark.parametrize('forward_fill', [False, True])
 def test_earlier_observations_merge_per_feature_before_last_seven_days(forward_fill):
-    # Ten observed days spread across three weeks; the first three become one step.
     times = np.array([1, 25, 73, 97, 145, 217, 265, 337, 433, 505])
     raw = np.column_stack((np.arange(10.) + 10, np.arange(10.) + 1, np.full(10, np.nan)))
     raw[1, 1] = np.nan
@@ -201,14 +200,14 @@ def test_target_day_excluded_from_llm_and_smart(dataset):
 def test_readmission_includes_index_icu_target_day_for_llm_and_smart():
     record = patient_record(features=44)
     sample, _ = build_patient_history(record, 'mimic4_readmission', need_smart=True)
-    assert sample['y'] == 0  # Last ICU stay, not the first stay's label of 1.
+    assert sample['y'] == 0
     assert sample['target_visit_id'] in sample['input_visit_ids']
     assert sample['includes_target_visit'] and sample['X'][-1, 0] == 999999
     assert sample['X_ts'][-1, 0] == 999999
     record['icu_stays'][-1]['values'][-1] = [23.] * 44
     changed, _ = build_patient_history(record, 'mimic4_readmission', need_smart=True)
     assert changed['X'][-1, 0] == changed['X_ts'][-1, 0] == 23
-    assert sample['record_time'][-1] == 108  # Last observation, before ICU discharge at 120h.
+    assert sample['record_time'][-1] == 108
 
 
 @pytest.mark.parametrize('dataset,features', [('mimic3_mortality', 17), ('mimic3_los', 17),
@@ -243,7 +242,7 @@ def test_task_cutoff_applies_after_merged_history_window(dataset, expected_steps
     column = 1 if dataset.startswith('mimic3') else 0
     np.testing.assert_array_equal(sample['X'][:, column], np.arange(4, 4 + expected_steps))
     np.testing.assert_array_equal(sample['X_ts'][:, 0], sample['X'][:, column])
-    assert sample['record_time'][0] == 97  # End of the five-day merged initial step.
+    assert sample['record_time'][0] == 97
     assert sample['target_visit_id'] == '2020-01-12'
     assert len(sample['input_visit_ids']) == expected_steps
 
@@ -257,7 +256,7 @@ def test_tjh_uses_daily_mean_without_day_cap_and_only_smart_fills_missing(datase
                   values=[[float(value)] * 75 for _ in range(12) for value in (2, 4)])
     record['values'][8:10] = [[None] * 75, [None] * 75]
     sample, _ = build_patient_history(record, dataset, need_smart=True)
-    assert len(sample['X']) == len(sample['X_ts']) == 11  # All days except the final one.
+    assert len(sample['X']) == len(sample['X_ts']) == 11
     assert sample['input_visit_ids'][0] == '2020-01-01'
     expected = np.full(11, 3.)
     expected[4] = np.nan

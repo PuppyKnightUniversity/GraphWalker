@@ -20,7 +20,6 @@ def args_for(tmp_path, **overrides):
 
 
 def paper_sized_questions():
-    # Synthetic 74 cases / 208 questions, with unequal case sizes.
     rows = [(f'case-{case:03}', f'q-{case}-{question}')
             for case in range(74) for question in range(3 if case < 60 else 2)]
     return {'case_id': [row[0] for row in rows], 'question_id': [row[1] for row in rows],
@@ -124,7 +123,6 @@ def test_old_raw_and_row_split_caches_are_ignored(tmp_path):
     assert current == data
     splits = prepare_clinical_text_data_train_val_test_split(args, current)
     assert [len(split['question']) for split in splits] == [83, 42, 83]
-    # A different data file cannot be shadowed by the raw cache just written.
     records[0]['question'] = 'UPDATED'
     (tmp_path / 'cmb_clin.jsonl').write_text('\n'.join(json.dumps(row) for row in records))
     assert prepare_clinical_text_data_extract_from_raw(args)['question'][0] == 'UPDATED'

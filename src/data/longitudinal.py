@@ -1,10 +1,3 @@
-"""Admission-level JSONL inputs for the paper's daily-observation protocol.
-
-One record is one hospital admission, identified by subject_id and hadm_id.
-MIMIC measurements are nested in icu_stays; TJH laboratory measurements are on
-an admission record. record_time is in hours from the containing stay/admission.
-See README.md for the schema. Legacy cross-admission visits are rejected.
-"""
 import json
 import math
 from datetime import datetime, timedelta
@@ -18,16 +11,6 @@ from data.splits import fixed_train_val_test_split, normalize_patient_id
 
 def daily_records(values, times, duration_hours, feature_types, *, admitted_at,
                   continuous_agg='last', max_days=7, forward_fill=True):
-    """Aggregate one admission's observations by calendar day.
-
-    MIMIC uses the last recorded value of each variable per day, retains the
-    final ``max_days`` observed days, and merges all earlier observations into
-    one initial step. TJH uses the daily mean without a day cap. ``forward_fill``
-    applies LOCF within the admission for the encoder; without it, missing LLM
-    entries stay NaN. No unobserved days are materialized. Returned times mark
-    the last measurement of each step, in hours from hospital admission.
-    Calendar boundaries use the admission timestamp's timezone.
-    """
     values = np.asarray(values, dtype=float)
     times = np.asarray(times, dtype=float)
     if not math.isfinite(duration_hours) or duration_hours <= 0:
@@ -92,7 +75,6 @@ def _feature_schema(record, smart=False):
 
 
 def _admission_measurements(record, dataset, schema, smart_schema):
-    """Collect only measurements inside this admission's declared ICU stays."""
     admitted = timestamp(record['hospital_admitted_at'])
     discharged = timestamp(record['hospital_discharged_at'])
     hospital_los_hours(record['hospital_admitted_at'], record['hospital_discharged_at'])
@@ -141,13 +123,6 @@ def _admission_measurements(record, dataset, schema, smart_schema):
 
 
 def build_patient_history(record, dataset, need_smart=False):
-    """Build one admission sample; each visit is an observed calendar day.
-
-    MIMIC retains seven observed days plus a merged earlier-history step; TJH
-    retains all observed days. Mortality and LOS withhold the final day, while
-    readmission includes it through the last ICU stay's discharge. LLM missing
-    values stay NaN; SMART uses LOCF. No other admission supplies input records.
-    """
     if dataset not in ('mimic3_mortality', 'mimic3_los', 'mimic4_mortality', 'mimic4_los',
                        'mimic4_readmission', 'tjh_mortality', 'tjh_los'):
         raise ValueError(f'Unsupported EHR dataset: {dataset}')
@@ -159,14 +134,10 @@ def build_patient_history(record, dataset, need_smart=False):
     smart_schema = None
     if need_smart:
         smart_schema = _feature_schema(record, smart=True) if 'smart_feature_names' in record else (names, kinds)
-        input_dim = 17 if dataset.startswith('mimic3_') else 44 if dataset.startswith('mimic4_') else 75
-        if len(smart_schema[0]) != input_dim:
-            raise ValueError(f'{dataset} SMART input requires {input_dim} features in checkpoint order')
     raw, times, smart_raw, index_stay = _admission_measurements(record, dataset, (names, kinds), smart_schema)
     duration = hospital_los_hours(record['hospital_admitted_at'], record['hospital_discharged_at'])
     is_mimic = dataset.startswith('mimic')
     aggregation = dict(continuous_agg='last' if is_mimic else 'mean', max_days=7 if is_mimic else None)
-    # LLM input retains missing values, as in Appendix F.
     values, _, daily_times = daily_records(raw, times, duration, kinds,
                                           admitted_at=record['hospital_admitted_at'],
                                           forward_fill=False, **aggregation)
@@ -198,7 +169,6 @@ def build_patient_history(record, dataset, need_smart=False):
         'includes_target_visit': readmission,
     }
     if need_smart:
-        # Only the encoder input uses LOCF within this admission.
         smart, mask, smart_times = daily_records(smart_raw, times, duration, smart_schema[1],
                                                 admitted_at=record['hospital_admitted_at'],
                                                 forward_fill=True, **aggregation)
@@ -210,7 +180,6 @@ def build_patient_history(record, dataset, need_smart=False):
 
 
 def normalize_smart_splits(splits):
-    """Fit scaling on training admissions; apply it to all splits."""
     training = np.concatenate(splits[0]['X_ts'])
     finite = np.isfinite(training)
     counts = finite.sum(axis=0)
@@ -259,4 +228,8 @@ def prepare_longitudinal_data(args):
     if data is None:
         raise ValueError('The admission JSONL file is empty')
     splits = fixed_train_val_test_split(args, data, args.dataset)
-    return normalize_smart_splits(splits) if need_smart else splits
+    if need_smart:
+        from run.run_smart.dims import resolve_smart_dims
+        splits = normalize_smart_splits(splits)
+        resolve_smart_dims(args, splits)
+    return splits

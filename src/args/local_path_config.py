@@ -1,5 +1,3 @@
-# Define mapping from dataset to dataset path
-# NOTE: Please configure these paths according to your local environment
 DATASET_PATH_MAP = {
     "mimic3_mortality": '<YOUR_DATA_PATH>/mid_data/processed_data/in-hospital-mortality',
     "mimic3_los": '<YOUR_DATA_PATH>/mid_data/processed_data/length-of-stay',
@@ -9,7 +7,6 @@ DATASET_PATH_MAP = {
     "cmb_exam_patient": '',
     "tjh_los": '<YOUR_DATA_PATH>/reference_code/tjh',
     "tjh_mortality": '<YOUR_DATA_PATH>/reference_code/tjh',
-    # NOTE: add more datasets here!
 }
 
 LLM_PATH_MAP = {
@@ -26,7 +23,6 @@ LLM_PATH_MAP = {
     'xiaobei-32b': None,
     'gpt-3.5-turbo': None,
     'gpt-5': None,
-    # NOTE: add more models here!
 }
 
 EMBEDDING_MODEL_PATH_MAP = {

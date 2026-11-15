@@ -142,8 +142,6 @@ def main():
 
     total_steps = math.ceil(len(train_dataset) / (args.sft_batch_size * max(1, torch.cuda.device_count())))
 
-    # Build TrainingArguments with a conservative set of kwargs for broad compatibility
-    # build optional deepspeed zero-3 config
     ds_config = None
     if getattr(args, 'sft_deepspeed_zero3', True):
         ds_config = {

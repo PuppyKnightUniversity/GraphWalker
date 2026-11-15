@@ -55,7 +55,6 @@ def test_pretrained_checkpoint_requires_no_classifier_and_returns_frozen_cls(tmp
     original = Encoder(args).eval()
     torch.save({'encoder': original.state_dict(), 'predictor': {}, 'epoch': 1},
                tmp_path / 'checkpoint-mse.pth')
-    # A supervised checkpoint is present too; it must never be preferred.
     torch.save({'encoder': original.state_dict(), 'classifier': Classifier(args).state_dict()},
                tmp_path / 'checkpoint-prc.pth')
     encoder, classifier = _load_embedding_models(args, torch.device('cpu'))

@@ -63,7 +63,7 @@ def test_knn_is_simple_symmetric_and_handles_small_bases(size, k):
         for j, weight in neighbors:
             assert dict(graph[j])[i] == pytest.approx(weight)
     if size == 3 and k == 1:
-        assert set(dict(graph[1])) == {0, 2}  # incoming edge 2 -> 1 must be walkable
+        assert set(dict(graph[1])) == {0, 2}
 
 
 def test_leiden_uses_binary_configuration_modularity(monkeypatch):
@@ -83,7 +83,6 @@ def test_leiden_uses_binary_configuration_modularity(monkeypatch):
     assert g.ecount() == 2
     for c, nodes in cohorts.items():
         np.testing.assert_allclose(centroids[c], embeddings[nodes].mean(0))
-    # The default objective equals normalized graph modularity.
     part = leidenalg.RBConfigurationVertexPartition(
         g, membership, resolution_parameter=calls[0][1]['resolution_parameter'])
     mod = leidenalg.ModularityVertexPartition(g, membership)
@@ -180,7 +179,7 @@ def test_scoring_prompt_has_correct_task_and_never_target_label(dataset, label, 
     assert expected in text.lower()
     assert 'SECRET_TARGET' not in text
     assert text[start:] == p['detail'] + '\n\nYour Answer:'
-    assert start > text.find(p['detail'])  # identical demonstration must not capture the mask
+    assert start > text.find(p['detail'])
     if dataset == 'mimic3_los':
         assert 'Label: C' in text
     assert '1 means not surviving' not in text
@@ -198,7 +197,6 @@ class ScoringModel:
         for prompt in prompts:
             assert isinstance(prompt, dict) and 'prompt_token_ids' in prompt
             ids = prompt['prompt_token_ids']
-            # Position-dependent loss makes off-by-one masks visible.
             probs = [None] + [{ids[i]: SimpleNamespace(logprob=-float(i))} for i in range(1, len(ids))]
             if self.missing:
                 probs[-1] = {}
@@ -218,7 +216,6 @@ def tokenizer():
 
 @pytest.fixture(autouse=True)
 def vllm_sampling_params(monkeypatch):
-    # Scoring test doubles only require a SamplingParams stand-in.
     monkeypatch.setitem(sys.modules, 'vllm', SimpleNamespace(SamplingParams=SimpleNamespace))
 
 
@@ -226,7 +223,7 @@ def test_vllm_scores_first_target_token_without_extra_shift(tokenizer):
     model = ScoringModel(tokenizer)
     result = gw._compute_cross_entropy_loss_vllm(['abc def ghi'], model, tokenizer,
                                                mask_lengths=[2], test_lengths=[5])
-    assert result == [3.]  # (2 + 3 + 4) / 3, not (3 + 4) / 2
+    assert result == [3.]
 
 
 def test_full_prompt_offsets_with_repeated_markers(tokenizer):
@@ -266,7 +263,6 @@ def test_chat_scoring_span_excludes_demonstrations_and_answer_suffix(tokenizer, 
     encoded = tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)
     positions = [i for i, (begin, end) in enumerate(encoded['offset_mapping'])
                  if end > lo and begin < hi and end > begin]
-    # Missing logprobs outside the record do not affect its likelihood.
     model = ScoringModel(tokenizer, missing=True)
     result = gw._compute_cross_entropy_for_examples_batch(args, p, train, [[0]], model, None, 2)
     assert result == pytest.approx([np.mean(positions)])

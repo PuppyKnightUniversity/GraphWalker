@@ -7,18 +7,6 @@ def FIND_ICL_EXAMPLES(args,
                       val_dataset=None,
                       num_examples: int = 3,
                       logger=None) -> List[Dict[str, Any]]:
-    '''
-    Find the few-shot examples in the train dataset
-    Args:
-        args: the arguments
-        test_dataset: the test dataset
-        method: the method to find the few-shot examples
-        train_dataset: the train dataset
-        num_examples: the number of few-shot examples
-    Returns:
-        the few-shot examples list
-    '''
-    # select the few-shot examples in the train dataset
     if method != 'graph_walker':
         raise ValueError(f'Unsupported ICL method: {method}')
     

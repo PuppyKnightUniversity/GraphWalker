@@ -10,7 +10,6 @@ from tqdm import tqdm
 
 
 class CustomBins:
-    """Four LOS classes with boundaries at 3, 7 and 14 days."""
     nbins = 4
 
 
@@ -23,7 +22,6 @@ def get_bin_custom(x, nbins=4, one_hot=False):
 
 
 def prepare_mimic3_los_extract_from_raw(args):
-    """Load observation windows and total hospital LOS labels."""
     import csv
     from pathlib import Path
     from data.labels import hospital_los_label
@@ -59,17 +57,11 @@ def prepare_mimic3_los_extract_from_raw(args):
 
 
 def prepare_mimic3_los_for_smart(args, patient_all):
-    '''
-    This function is to adapt the raw data for SMART model
-    '''
     period_length = args.period_length
-    # Store adapted inputs by observation window and LOS class count.
     smart_data_path = args.mid_data_dump_path + f'/mimic3_los/mimic3_los_smart_period{period_length}_binned_{CustomBins.nbins}classes.pkl'
     print('Adapting mimic3 length of stay data for SMART model...')
-    # load channel info
     with open(args.channel_info_path) as f:
         series_channel_info = json.load(f)
-    # load discretizer config
     with open(args.discretizer_config_path) as f:
         series_config = json.load(f)
         id_to_channel = series_config['id_to_channel']
@@ -93,15 +85,11 @@ def prepare_mimic3_los_for_smart(args, patient_all):
             if time == N_bins:
                 time -= 1
             if time > N_bins:
-                # raise ValueError('This should not happen')
                 break
             for index in range(len(row) - 1):
                 value = row[index + 1]
                 if value == '':
                     if mask_patient[index, time] == 0 and time - last_time > 0:
-                        # if last_time >= 0:
-                        #     data_patient[index, last_time + 1:time + 1] = data_patient[index, last_time]
-                        # else:
                         if is_categorical_channel[id_to_channel[index]]:
                             data_patient[index, last_time + 1:time + 1] = series_channel_info[id_to_channel[index]]['values'][normal_values[id_to_channel[index]]]
                         else:
@@ -124,12 +112,11 @@ def prepare_mimic3_los_for_smart(args, patient_all):
     label_all = patient_all['y']
     name_all = patient_all['name']
 
-    # NOTE: data_smart is a list of dicts, each dict corresponds to a patient
     x_len = [len(i) for i in data_normalized]
     for idx in range(len(patient_all['X'])):
         data_smart.append({
             "x": data_normalized[idx],
-            "labels": label_all[idx],  # Use binned labels
+            "labels": label_all[idx],
             "lens": x_len[idx],
             "mask": mask_all[idx],
         })

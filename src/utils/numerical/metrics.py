@@ -4,7 +4,6 @@ from sklearn import metrics as sklearn_metrics
 
 
 def get_all_metrics(preds, labels, task, los_info):
-    # convert preds and labels to tensor if they are ndarray type
     if not isinstance(preds, torch.Tensor):
         preds = torch.tensor(preds)
     if not isinstance(labels, torch.Tensor):
@@ -29,7 +28,6 @@ def get_all_metrics(preds, labels, task, los_info):
 
 
 def get_all_metrics_with_bootstrap(preds, labels, task, los_info, n_bootstrap=1000, confidence_level=0.95, random_state=42):
-    # convert preds and labels to tensor if they are ndarray type
     if not isinstance(preds, torch.Tensor):
         preds = torch.tensor(preds)
     if not isinstance(labels, torch.Tensor):
@@ -46,8 +44,6 @@ def get_all_metrics_with_bootstrap(preds, labels, task, los_info, n_bootstrap=10
     elif task == "multiclass":
         return get_multiclass_metrics_with_bootstrap(preds, labels, n_bootstrap, confidence_level, random_state)
     elif task == "multitask":
-        # For multitask, we'll return a combined dictionary
-        # This might need adjustment depending on how the output is used
         binary_res = get_binary_metrics_with_bootstrap(preds[:, 0], labels[:, 0], n_bootstrap, confidence_level, random_state)
         regression_res = get_regression_metrics_with_bootstrap(
             reverse_los(preds[:, 1], los_info), reverse_los(labels[:, 1], los_info), n_bootstrap, confidence_level, random_state
@@ -70,16 +66,13 @@ def minpse(preds, labels):
 
 
 def get_binary_metrics(preds, labels):
-    # convert to numpy
     if isinstance(preds, torch.Tensor):
         preds = preds.detach().cpu().numpy()
     if isinstance(labels, torch.Tensor):
         labels = labels.detach().cpu().numpy()
     
-    # Ensure labels are integers
     labels = labels.astype(int)
     
-    # metrics
     try:
         auroc = sklearn_metrics.roc_auc_score(labels, preds)
     except ValueError:
@@ -92,22 +85,17 @@ def get_binary_metrics(preds, labels):
         
     minpse_score = minpse(preds, labels)
     
-    # For F1 and Accuracy, we need binary predictions
     preds_binary = (preds > 0.5).astype(int)
     f1 = sklearn_metrics.f1_score(labels, preds_binary)
     accuracy = sklearn_metrics.accuracy_score(labels, preds_binary)
 
-    # Calculate Best F1 (Optimal Threshold)
     precisions, recalls, thresholds = sklearn_metrics.precision_recall_curve(labels, preds)
-    # F1 = 2 * (P * R) / (P + R)
-    # Handle division by zero
     numerator = 2 * precisions * recalls
     denominator = precisions + recalls
     with np.errstate(divide='ignore', invalid='ignore'):
         f1_scores = np.where(denominator > 0, numerator / denominator, 0.0)
     best_f1 = np.max(f1_scores) if len(f1_scores) > 0 else 0.0
 
-    # return a dictionary
     return {
         "auroc": auroc,
         "auprc": auprc,
@@ -119,7 +107,6 @@ def get_binary_metrics(preds, labels):
 
 
 def get_binary_metrics_with_bootstrap(preds, labels, n_bootstrap=1000, confidence_level=0.95, random_state=42):
-    # convert to numpy
     if isinstance(preds, torch.Tensor):
         preds = preds.detach().cpu().numpy()
     if isinstance(labels, torch.Tensor):
@@ -127,10 +114,8 @@ def get_binary_metrics_with_bootstrap(preds, labels, n_bootstrap=1000, confidenc
     
     labels = labels.astype(int)
     
-    # Get original metrics
     original_metrics = get_binary_metrics(preds, labels)
     
-    # Bootstrap
     if random_state is not None:
         np.random.seed(random_state)
     
@@ -142,7 +127,6 @@ def get_binary_metrics_with_bootstrap(preds, labels, n_bootstrap=1000, confidenc
         boot_preds = preds[indices]
         boot_labels = labels[indices]
         
-        # Skip if only one class
         if len(np.unique(boot_labels)) < 2:
             continue
             
@@ -150,7 +134,6 @@ def get_binary_metrics_with_bootstrap(preds, labels, n_bootstrap=1000, confidenc
         for k, v in boot_metrics.items():
             bootstrap_results[k].append(v)
             
-    # Calculate statistics
     alpha = 1 - confidence_level
     percentile_lower = (alpha / 2) * 100
     percentile_upper = (1 - alpha / 2) * 100
@@ -177,19 +160,16 @@ def get_binary_metrics_with_bootstrap(preds, labels, n_bootstrap=1000, confidenc
 
 
 def get_regression_metrics(preds, labels):
-    # convert to numpy
     if isinstance(preds, torch.Tensor):
         preds = preds.detach().cpu().numpy()
     if isinstance(labels, torch.Tensor):
         labels = labels.detach().cpu().numpy()
 
-    # metrics
     mse = sklearn_metrics.mean_squared_error(labels, preds)
     rmse = np.sqrt(mse)
     mae = sklearn_metrics.mean_absolute_error(labels, preds)
     r2 = sklearn_metrics.r2_score(labels, preds)
 
-    # return a dictionary
     return {
         "mae": mae,
         "mse": mse,
@@ -199,16 +179,13 @@ def get_regression_metrics(preds, labels):
 
 
 def get_regression_metrics_with_bootstrap(preds, labels, n_bootstrap=1000, confidence_level=0.95, random_state=42):
-    # convert to numpy
     if isinstance(preds, torch.Tensor):
         preds = preds.detach().cpu().numpy()
     if isinstance(labels, torch.Tensor):
         labels = labels.detach().cpu().numpy()
 
-    # Get original metrics
     original_metrics = get_regression_metrics(preds, labels)
     
-    # Bootstrap
     if random_state is not None:
         np.random.seed(random_state)
         
@@ -224,7 +201,6 @@ def get_regression_metrics_with_bootstrap(preds, labels, n_bootstrap=1000, confi
         for k, v in boot_metrics.items():
             bootstrap_results[k].append(v)
 
-    # Calculate statistics
     alpha = 1 - confidence_level
     percentile_lower = (alpha / 2) * 100
     percentile_upper = (1 - alpha / 2) * 100
@@ -251,23 +227,17 @@ def get_regression_metrics_with_bootstrap(preds, labels, n_bootstrap=1000, confi
 
 
 def get_multiclass_metrics(preds, labels):
-    # convert to numpy
     if isinstance(preds, torch.Tensor):
         preds = preds.detach().cpu().numpy()
     if isinstance(labels, torch.Tensor):
         labels = labels.detach().cpu().numpy()
     
-    # Ensure labels are integers
     labels = labels.astype(int)
     
-    # preds might be logits or probabilities
-    # We assume probabilities (softmax applied) for ROC calculation
-    # If preds are not normalized (sum to 1), apply softmax
     if not np.allclose(np.sum(preds, axis=1), 1.0, atol=1e-5):
         from scipy.special import softmax
         preds = softmax(preds, axis=1)
 
-    # metrics
     try:
         ma_roc = sklearn_metrics.roc_auc_score(labels, preds, average='macro', multi_class='ovr')
     except ValueError:
@@ -283,7 +253,6 @@ def get_multiclass_metrics(preds, labels):
     f1_macro = sklearn_metrics.f1_score(labels, pred_classes, average='macro')
     f1_micro = sklearn_metrics.f1_score(labels, pred_classes, average='micro')
 
-    # return a dictionary
     return {
         "ma-ROC": ma_roc,
         "mi-ROC": mi_roc,
@@ -294,7 +263,6 @@ def get_multiclass_metrics(preds, labels):
 
 
 def get_multiclass_metrics_with_bootstrap(preds, labels, n_bootstrap=1000, confidence_level=0.95, random_state=42):
-    # convert to numpy
     if isinstance(preds, torch.Tensor):
         preds = preds.detach().cpu().numpy()
     if isinstance(labels, torch.Tensor):
@@ -302,10 +270,8 @@ def get_multiclass_metrics_with_bootstrap(preds, labels, n_bootstrap=1000, confi
     
     labels = labels.astype(int)
     
-    # Get original metrics
     original_metrics = get_multiclass_metrics(preds, labels)
     
-    # Bootstrap
     if random_state is not None:
         np.random.seed(random_state)
     
@@ -317,9 +283,6 @@ def get_multiclass_metrics_with_bootstrap(preds, labels, n_bootstrap=1000, confi
         boot_preds = preds[indices]
         boot_labels = labels[indices]
         
-        # Check if we have enough classes in bootstrap sample to compute ROC
-        # But roc_auc_score handles missing classes usually if multi_class='ovr' provided we give all columns
-        # However, if only 1 class is present, it will fail.
         if len(np.unique(boot_labels)) < 2:
             continue
             
@@ -327,7 +290,6 @@ def get_multiclass_metrics_with_bootstrap(preds, labels, n_bootstrap=1000, confi
         for k, v in boot_metrics.items():
             bootstrap_results[k].append(v)
             
-    # Calculate statistics
     alpha = 1 - confidence_level
     percentile_lower = (alpha / 2) * 100
     percentile_upper = (1 - alpha / 2) * 100

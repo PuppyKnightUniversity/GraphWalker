@@ -1,3 +1,4 @@
+from run.run_smart.dims import resolve_smart_dims, smart_checkpoint_config, validate_smart_checkpoint
 import os
 import json
 import copy
@@ -15,26 +16,22 @@ from typing import Any, Dict, List
 from models.smart import Encoder, Classifier
 import torch.distributed as dist
 
-# 屏蔽PyTorch DDP相关的警告
 warnings.filterwarnings("ignore", message="You passed find_unused_parameters=true to DistributedDataParallel")
 
 def random_masking(x, original_mask, min_mask_ratio, max_mask_ratio):
-    """
-    Perform per-sample random masking.
-    """
-    N, L, V = x.shape  # batch, length, var
+    N, L, V = x.shape
 
-    # Calculate mask ratios and lengths to keep for each sample in the batch
     mask_ratios = torch.rand(N, device=x.device) * \
         (max_mask_ratio - min_mask_ratio) + min_mask_ratio
     
     mask = torch.rand_like(x) < mask_ratios.view(-1, 1, 1)
-    x = x * (~mask)  # True for reconstruction, False for original
+    x = x * (~mask)
     return x, original_mask * (~mask),  original_mask * mask
 
 
 def test(args, checkpoint_path, test_dataloader, logger, encoder, classifier, criterion, test_dataset):
     checkpoint = torch.load(os.path.join(args.smart_save_dir, checkpoint_path))
+    validate_smart_checkpoint(args, checkpoint, load_classifier=True)
     save_epoch = checkpoint['epoch']
     log(logger, "last saved model is in epoch {}".format(save_epoch))
     encoder.load_state_dict(checkpoint['encoder'])
@@ -57,21 +54,16 @@ def test(args, checkpoint_path, test_dataloader, logger, encoder, classifier, cr
         print_metrics = print_metrics_multilabel
         print_metrics(torch.cat(labels_all), torch.cat(preds_all), args.local_rank == 0)
     else:
-        # For binary classification (mimic3_mortality), use bootstrap evaluation
         labels_all_tensor = torch.cat(labels_all)
         preds_all_tensor = torch.cat(preds_all)
         
-        # Convert logits to probabilities (softmax and take positive class probability)
         if len(preds_all_tensor.shape) == 1:
-            # If predictions are already probabilities or logits for single class
             probs = F.sigmoid(preds_all_tensor).numpy()
         else:
-            # If predictions are logits for two classes, apply softmax and take positive class
             probs = F.softmax(preds_all_tensor, dim=1)[:, 1].numpy()
         
         labels_numpy = labels_all_tensor.numpy().astype(int)
         
-        # Only run bootstrap evaluation on rank 0 to avoid duplicate output
         if args.local_rank == 0:
             log(logger, "Starting bootstrap evaluation...")
             bootstrap_results = evaluate_binary_model_with_bootstrap(
@@ -84,7 +76,6 @@ def test(args, checkpoint_path, test_dataloader, logger, encoder, classifier, cr
             )
             log(logger, "Bootstrap evaluation completed.")
         else:
-            # Still run basic metrics for consistency
             print_metrics_binary(labels_all_tensor, preds_all_tensor, verbose=False)
     
     log(logger, 'Test Loss %.4f' % (test_loss / len(test_dataset)))
@@ -123,10 +114,9 @@ def collate_fn(features: List[Dict[str, Any]]):
     return batch
 
 def smart_finetune(args, train_dataset, val_dataset, test_dataset):
+    resolve_smart_dims(args, (train_dataset, val_dataset, test_dataset))
 
-    # initialize the logger, seed, distributed
     save_dir = os.path.join(args.smart_save_dir, args.dataset, 'smart')
-    # 确保保存目录存在
     if args.local_rank == 0:
         os.makedirs(args.smart_save_dir, exist_ok=True)
     if args.local_rank == 0:
@@ -138,50 +128,7 @@ def smart_finetune(args, train_dataset, val_dataset, test_dataset):
     set_seed(args.seed)
     distributed_init(args)
 
-    if args.dataset == 'mimic3_mortality':
-        args.smart_input_dim = 17
-        args.smart_demo_dim = 0
-        args.smart_num_class = 2
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'mimic3_los':
-        args.smart_input_dim = 17
-        args.smart_demo_dim = 0
-        args.smart_num_class = 4
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'mimic4_los':
-        args.smart_input_dim = 44
-        args.smart_demo_dim = 2
-        args.smart_num_class = 4
-    elif args.dataset == 'mimic4_mortality':
-        args.smart_input_dim = 44
-        args.smart_demo_dim = 2
-        args.smart_num_class = 2
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'mimic4_readmission':
-        args.smart_input_dim = 44
-        args.smart_demo_dim = 2
-        args.smart_num_class = 2
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'tjh_mortality':
-        args.smart_input_dim = 75
-        args.smart_demo_dim = 2
-        args.smart_num_class = 2
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'tjh_los':
-        args.smart_input_dim = 75
-        args.smart_demo_dim = 2
-        args.smart_num_class = 4
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    else:
-        raise ValueError(f"Dataset {args.dataset} not supported")
 
-    # load the dataset 
     train_dataset = CustomDataset(train_dataset['data_smart'])
     val_dataset = CustomDataset(val_dataset['data_smart'])
     test_dataset = CustomDataset(test_dataset['data_smart'])
@@ -231,7 +178,7 @@ def smart_finetune(args, train_dataset, val_dataset, test_dataset):
         print_metrics = print_metrics_multilabel
         save_metric = 'auc_macro'
     elif args.dataset in ['mimic3_los', 'mimic4_los', 'tjh_los']:
-        criterion = torch.nn.CrossEntropyLoss()  # 多分类任务使用CrossEntropyLoss
+        criterion = torch.nn.CrossEntropyLoss()
         print_metrics = print_metrics_multilabel
         save_metric = 'auc_macro'
     else:
@@ -239,6 +186,7 @@ def smart_finetune(args, train_dataset, val_dataset, test_dataset):
         save_metric = 'auprc'
     
     checkpoint = torch.load(os.path.join(args.smart_save_dir, 'checkpoint-mse.pth'))
+    validate_smart_checkpoint(args, checkpoint)
     save_epoch = checkpoint['epoch']
     log(logger, "last saved model is in epoch {}".format(save_epoch))
     encoder.load_state_dict(checkpoint['encoder'])
@@ -289,6 +237,7 @@ def smart_finetune(args, train_dataset, val_dataset, test_dataset):
                     state = {
                         'encoder': encoder.state_dict(),
                         'classifier': classifier.state_dict(),
+                        'config': smart_checkpoint_config(args),
                         'epoch': i
                     }
                     log(logger, f'----- Save best model - {save_metric}: %.4f -----' % metrics[save_metric])
@@ -301,6 +250,7 @@ def smart_finetune(args, train_dataset, val_dataset, test_dataset):
                     state = {
                         'encoder': encoder.state_dict(),
                         'classifier': classifier.state_dict(),
+                        'config': smart_checkpoint_config(args),
                         'epoch': i
                     }
                     log(logger, f'----- Save best model - {save_metric}: %.4f -----' % metrics[save_metric])
@@ -341,13 +291,11 @@ if __name__ == "__main__":
     val_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_val.pkl', 'rb'))
     test_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_test.pkl', 'rb'))
     
-    # Toy dataset, for quick test
     if getattr(args, 'toy_dataset', False):
         print("Using toy dataset for quick testing...")
         train_dataset = {key: value[:1600] for key, value in train_dataset.items()}
         val_dataset = {key: value[:200] for key, value in val_dataset.items()}
         test_dataset = {key: value[:200] for key, value in test_dataset.items()}
-        # Get dataset size for logging
         train_size = len(train_dataset.get('data_smart', train_dataset.get('X', [])))
         val_size = len(val_dataset.get('data_smart', val_dataset.get('X', [])))
         test_size = len(test_dataset.get('data_smart', test_dataset.get('X', [])))

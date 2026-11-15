@@ -1,4 +1,3 @@
-"""Deterministic splits with disjoint patient groups."""
 import numbers
 import pickle
 import random
@@ -20,7 +19,6 @@ def normalize_patient_id(value):
 
 
 def processed_patient_id(record, field=None):
-    """Read an explicit patient identifier, never infer it from a visit ID."""
     field = field or next((key for key in ('subject_id', 'patient_id') if key in record), None)
     if field is None or field not in record:
         raise ValueError('Processed records require subject_id or patient_id; '

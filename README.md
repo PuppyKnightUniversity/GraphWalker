@@ -28,6 +28,10 @@ python -m pip install -r requirements.txt
 
 Prepare **one hospital admission per JSONL record** in `longitudinal.jsonl` under the dataset directory, together with local LLM and pretrained SMART encoder checkpoints. The default protocol is `--ehr_protocol admission_daily`. The input format is defined in [src/data/longitudinal.py](src/data/longitudinal.py). Supply paths through command-line arguments or [src/args/local_path_config.py](src/args/local_path_config.py).
 
+SMART feature dimensions are inferred from the preprocessed data. `--smart_input_dim`, `--smart_demo_dim`, and `--smart_num_class` are optional; explicit values are validated against the feature count, valid demographic range, and task class count. Checkpoints store this configuration and are checked when loaded.
+
+For MIMIC-IV→TJH transfer, upstream preprocessing maps 61 of the 73 TJH variables onto MIMIC-IV ICU laboratory variables. The mapping was verified by two annotators with medical training; the remaining 12 variables are excluded.
+
 Run from the repository root:
 
 ```bash

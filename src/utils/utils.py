@@ -29,7 +29,6 @@ def distributed_init(args):
         dist_url = "tcp://{}:{}".format(os.environ["MASTER_ADDR"], os.environ["MASTER_PORT"])
         torch.cuda.set_device(args.gpu)
         dist.init_process_group(backend='nccl', init_method=dist_url, world_size=args.world_size, rank=args.rank)
-        # dist.barrier()
     else:
         args.rank = 0
         args.world_size = 1
@@ -41,14 +40,9 @@ def set_seed(seed):
     np.random.seed(seed)
     torch.random.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    # torch.backends.cudnn.deterministic = True
 
 
 def length_to_mask(length, max_len=None, dtype=None, device=None):
-    """length: B.
-    return B x max_len.
-    If max_len is None, then max of length will be used.
-    """
     assert len(length.shape) == 1, 'Length shape should be 1 dimensional.'
     max_len = max_len or length.max().item()
     device = length.device if device is None else device

@@ -8,7 +8,6 @@ def read_chunk(reader, chunk_size):
     for i in range(chunk_size):
         try:
             ret = reader.read_next()
-            # Check if the sample has valid data (non-empty time series)
             X = ret.get("X")
             if X is not None and X.shape[0] > 0:
                 for k, v in ret.items():
@@ -18,7 +17,6 @@ def read_chunk(reader, chunk_size):
             else:
                 skipped_count += 1
         except ValueError as e:
-            # Skip samples with no data in the specified time window
             if "No data points found within" in str(e):
                 skipped_count += 1
                 continue
@@ -26,7 +24,6 @@ def read_chunk(reader, chunk_size):
                 raise
     if skipped_count > 0:
         print(f"Warning: Skipped {skipped_count} samples with no data in the specified time window.")
-    # data["header"] = data["header"][0]
     return data
     
 class Reader(object):
@@ -63,11 +60,6 @@ class Reader(object):
 
 class DecompensationReader(Reader):
     def __init__(self, dataset_dir, listfile=None):
-        """ Reader for decompensation prediction task.
-        :param dataset_dir: Directory where timeseries files are stored.
-        :param listfile:    Path to a listfile. If this parameter is left `None` then
-                            `dataset_dir/listfile.csv` will be used.
-        """
         Reader.__init__(self, dataset_dir, listfile)
         self._data = [line.split(',') for line in self._data]
         self._data = [(x, float(t), int(y)) for (x, t, y) in self._data]
@@ -86,23 +78,6 @@ class DecompensationReader(Reader):
         return (np.stack(ret), header)
 
     def read_example(self, index):
-        """ Read the example with given index.
-
-        :param index: Index of the line of the listfile to read (counting starts from 0).
-        :return: Directory with the following keys:
-            X : np.array
-                2D array containing all events. Each row corresponds to a moment.
-                First column is the time and other columns correspond to different
-                variables.
-            t : float
-                Length of the data in hours. Note, in general, it is not equal to the
-                timestamp of last event.
-            y : int (0 or 1)
-                Mortality within next 24 hours.
-            header : array of strings
-                Names of the columns. The ordering of the columns is always the same.
-            name: Name of the sample.
-        """
         if index < 0 or index >= len(self._data):
             raise ValueError("Index must be from 0 (inclusive) to number of examples (exclusive).")
 
@@ -120,13 +95,6 @@ class DecompensationReader(Reader):
 
 class InHospitalMortalityReader(Reader):
     def __init__(self, dataset_dir, listfile=None, period_length=48.0):
-        """ Reader for in-hospital moratality prediction task.
-
-        :param dataset_dir:   Directory where timeseries files are stored.
-        :param listfile:      Path to a listfile. If this parameter is left `None` then
-                              `dataset_dir/listfile.csv` will be used.
-        :param period_length: Length of the period (in hours) from which the prediction is done.
-        """
         Reader.__init__(self, dataset_dir, listfile)
         self._data = [line.split(',') for line in self._data]
         self._data = [(x, int(y)) for (x, y) in self._data]
@@ -144,29 +112,11 @@ class InHospitalMortalityReader(Reader):
                     break
                 ret.append(np.array(mas))
         if len(ret) == 0:
-            # No data points within the specified time window - this sample should be filtered out
             raise ValueError(f"No data points found within {time_bound} hours for file {ts_filename}. "
                            f"This sample should be filtered out as it has no meaningful data in the specified time window.")
         return (np.stack(ret), header)
 
     def read_example(self, index):
-        """ Reads the example with given index.
-
-        :param index: Index of the line of the listfile to read (counting starts from 0).
-        :return: Dictionary with the following keys:
-            X : np.array
-                2D array containing all events. Each row corresponds to a moment.
-                First column is the time and other columns correspond to different
-                variables.
-            t : float
-                Length of the data in hours. Note, in general, it is not equal to the
-                timestamp of last event.
-            y : int (0 or 1)
-                In-hospital mortality.
-            header : array of strings
-                Names of the columns. The ordering of the columns is always the same.
-            name: Name of the sample.
-        """
         if index < 0 or index >= len(self._data):
             raise ValueError("Index must be from 0 (inclusive) to number of lines (exclusive).")
 
@@ -184,12 +134,6 @@ class InHospitalMortalityReader(Reader):
 
 class LengthOfStayReader(Reader):
     def __init__(self, dataset_dir, listfile=None):
-        """ Reader for length of stay prediction task.
-
-        :param dataset_dir: Directory where timeseries files are stored.
-        :param listfile:    Path to a listfile. If this parameter is left `None` then
-                            `dataset_dir/listfile.csv` will be used.
-        """
         Reader.__init__(self, dataset_dir, listfile)
         self._data = [line.split(',') for line in self._data]
         self._data = [(x, float(t), float(y)) for (x, t, y) in self._data]
@@ -208,23 +152,6 @@ class LengthOfStayReader(Reader):
         return (np.stack(ret), header)
 
     def read_example(self, index):
-        """ Reads the example with given index.
-
-        :param index: Index of the line of the listfile to read (counting starts from 0).
-        :return: Dictionary with the following keys:
-            X : np.array
-                2D array containing all events. Each row corresponds to a moment.
-                First column is the time and other columns correspond to different
-                variables.
-            t : float
-                Length of the data in hours. Note, in general, it is not equal to the
-                timestamp of last event.
-            y : float
-                Remaining time in ICU.
-            header : array of strings
-                Names of the columns. The ordering of the columns is always the same.
-            name: Name of the sample.
-        """
         if index < 0 or index >= len(self._data):
             raise ValueError("Index must be from 0 (inclusive) to number of lines (exclusive).")
 
@@ -242,12 +169,6 @@ class LengthOfStayReader(Reader):
 
 class PhenotypingReader(Reader):
     def __init__(self, dataset_dir, listfile=None):
-        """ Reader for phenotype classification task.
-
-        :param dataset_dir: Directory where timeseries files are stored.
-        :param listfile:    Path to a listfile. If this parameter is left `None` then
-                            `dataset_dir/listfile.csv` will be used.
-        """
         Reader.__init__(self, dataset_dir, listfile)
         self._data = [line.split(',') for line in self._data]
         self._data = [(mas[0], float(mas[1]), list(map(int, mas[2:]))) for mas in self._data]
@@ -263,23 +184,6 @@ class PhenotypingReader(Reader):
         return (np.stack(ret), header)
 
     def read_example(self, index):
-        """ Reads the example with given index.
-
-        :param index: Index of the line of the listfile to read (counting starts from 0).
-        :return: Dictionary with the following keys:
-            X : np.array
-                2D array containing all events. Each row corresponds to a moment.
-                First column is the time and other columns correspond to different
-                variables.
-            t : float
-                Length of the data in hours. Note, in general, it is not equal to the
-                timestamp of last event.
-            y : array of ints
-                Phenotype labels.
-            header : array of strings
-                Names of the columns. The ordering of the columns is always the same.
-            name: Name of the sample.
-        """
         if index < 0 or index >= len(self._data):
             raise ValueError("Index must be from 0 (inclusive) to number of lines (exclusive).")
 
@@ -297,12 +201,6 @@ class PhenotypingReader(Reader):
 
 class MultitaskReader(Reader):
     def __init__(self, dataset_dir, listfile=None):
-        """ Reader for multitask learning.
-
-        :param dataset_dir: Directory where timeseries files are stored.
-        :param listfile:    Path to a listfile. If this parameter is left `None` then
-                            `dataset_dir/listfile.csv` will be used.
-        """
         Reader.__init__(self, dataset_dir, listfile)
         self._data = [line.split(',') for line in self._data]
 
@@ -339,29 +237,6 @@ class MultitaskReader(Reader):
         return (np.stack(ret), header)
 
     def read_example(self, index):
-        """ Reads the example with given index.
-
-        :param index: Index of the line of the listfile to read (counting starts from 0).
-        :return: Return dictionary with the following keys:
-            X : np.array
-                2D array containing all events. Each row corresponds to a moment.
-                First column is the time and other columns correspond to different
-                variables.
-            t : float
-                Length of the data in hours. Note, in general, it is not equal to the
-                timestamp of last event.
-            ihm : array
-                Array of 3 integers: [pos, mask, label].
-            los : array
-                Array of 2 arrays: [masks, labels].
-            pheno : array
-                Array of 25 binary integers (phenotype labels).
-            decomp : array
-                Array of 2 arrays: [masks, labels].
-            header : array of strings
-                Names of the columns. The ordering of the columns is always the same.
-            name: Name of the sample.
-        """
         if index < 0 or index >= len(self._data):
             raise ValueError("Index must be from 0 (inclusive) to number of lines (exclusive).")
 

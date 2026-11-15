@@ -16,7 +16,6 @@ from typing import Any, Dict, List
 from models.adacare import AdaCare
 import torch.distributed as dist
 
-# Filter PyTorch DDP warnings
 warnings.filterwarnings("ignore", message="You passed find_unused_parameters=true to DistributedDataParallel")
 
 
@@ -69,7 +68,6 @@ def test(args, checkpoint_path, test_dataloader, logger, model, head, test_datas
             for key in batch:
                 batch[key] = batch[key].cuda()
 
-            # Forward pass
             embedding, decov_loss = model(batch['x'], static=batch.get('static', None), mask=batch['mask'])
             preds = head(embedding)
 
@@ -79,7 +77,6 @@ def test(args, checkpoint_path, test_dataloader, logger, model, head, test_datas
     preds = torch.cat(preds_all)
     labels = torch.cat(labels_all)
 
-    # Determine task type
     if args.dataset in ['mimic3_los', 'mimic4_los', 'tjh_los']:
         if torch.is_floating_point(labels):
             task = 'los'
@@ -92,7 +89,6 @@ def test(args, checkpoint_path, test_dataloader, logger, model, head, test_datas
     else:
         raise ValueError(f"Unknown task for dataset {args.dataset}")
 
-    # Log prediction statistics
     if int(os.environ.get("LOCAL_RANK", 0)) == 0:
         log(logger, f"Prediction stats: min={preds.min():.4f}, max={preds.max():.4f}, mean={preds.mean():.4f}")
 
@@ -111,10 +107,7 @@ def test(args, checkpoint_path, test_dataloader, logger, model, head, test_datas
 
 def adacare_train(args, train_dataset, val_dataset, test_dataset):
 
-    # initialize the logger, seed, distributed
-    # args.adacare_save_dir is set in run.py or args
 
-    # Construct absolute path with dataset subdirectory
     if not args.adacare_save_dir.endswith(args.dataset):
         save_dir = os.path.abspath(os.path.join(args.adacare_save_dir, args.dataset))
         args.adacare_save_dir = save_dir
@@ -135,12 +128,9 @@ def adacare_train(args, train_dataset, val_dataset, test_dataset):
     set_seed(args.seed)
     distributed_init(args)
 
-    # Infer input dimensions from dataset
     first_sample = train_dataset['data_smart'][0]
     if 'x' in first_sample:
-        # Check shape of x
         x_sample = first_sample['x']
-        # x is usually list of lists or numpy array [Time, Feat]
         if hasattr(x_sample, 'shape'):
             args.adacare_lab_dim = x_sample.shape[-1]
         elif isinstance(x_sample, list) and len(x_sample) > 0:
@@ -157,14 +147,10 @@ def adacare_train(args, train_dataset, val_dataset, test_dataset):
 
     log(logger, f"Inferred dimensions: lab_dim={args.adacare_lab_dim}, demo_dim={args.adacare_demo_dim}")
 
-    # Determine output dim
     if args.dataset in ['mimic3_los', 'mimic4_los', 'tjh_los']:
-        # Check if labels are classification (int) or regression (float)
         if 'labels' in first_sample:
             label_sample = first_sample['labels']
             if isinstance(label_sample, (int, np.integer)) or (hasattr(label_sample, 'dtype') and np.issubdtype(label_sample.dtype, np.integer)):
-                 # It's likely classification
-                 # Infer the output size from at most 100 training labels.
                  max_label = 0
                  for i in range(min(100, len(train_dataset['data_smart']))):
                      lbl = train_dataset['data_smart'][i]['labels']
@@ -176,18 +162,17 @@ def adacare_train(args, train_dataset, val_dataset, test_dataset):
                  output_dim = max_label + 1
                  task = 'multiclass'
             else:
-                 output_dim = 1 # Regression
+                 output_dim = 1
                  task = 'los'
         else:
              output_dim = 1
              task = 'los'
     else:
-        output_dim = 1 # Binary classification (sigmoid)
+        output_dim = 1
         task = 'mortality' if 'mortality' in args.dataset else 'readmission'
 
     log(logger, f"Task type: {task}, Output dim: {output_dim}")
 
-    # Load datasets
     train_dataset = CustomDataset(train_dataset['data_smart'])
     val_dataset = CustomDataset(val_dataset['data_smart'])
     test_dataset = CustomDataset(test_dataset['data_smart'])
@@ -203,7 +188,6 @@ def adacare_train(args, train_dataset, val_dataset, test_dataset):
         val_sampler = SequentialSampler(val_dataset)
         test_sampler = SequentialSampler(test_dataset)
 
-    # AdaCare training defaults.
     batch_size = getattr(args, 'adacare_batch_size', 64)
     epochs = getattr(args, 'adacare_epochs', 50)
     lr = getattr(args, 'adacare_lr', 0.001)
@@ -212,14 +196,13 @@ def adacare_train(args, train_dataset, val_dataset, test_dataset):
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, sampler=val_sampler, collate_fn=collate_fn)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler, collate_fn=collate_fn)
 
-    # Initialize Model
     model = AdaCare(
         lab_dim=args.adacare_lab_dim,
         demo_dim=args.adacare_demo_dim,
         hidden_dim=args.adacare_hidden_dim,
         kernel_size=args.adacare_kernel_size,
         kernel_num=args.adacare_kernel_num,
-        output_dim=output_dim, # Passed but not used in final layer of my implementation, which is fine
+        output_dim=output_dim,
         dropout=args.adacare_dropout,
         r_v=args.adacare_r_visit,
         r_c=args.adacare_r_conv,
@@ -239,7 +222,6 @@ def adacare_train(args, train_dataset, val_dataset, test_dataset):
 
     optimizer = torch.optim.Adam(list(model.parameters()) + list(head.parameters()), lr=lr)
 
-    # Training Loop
     best_metric_score = -float('inf') if task != 'los' else float('inf')
     best_metric_name = 'auprc' if task not in ['los', 'multiclass'] else ('mae' if task == 'los' else 'ma-ROC')
 
@@ -257,7 +239,6 @@ def adacare_train(args, train_dataset, val_dataset, test_dataset):
             embedding, decov_loss = model(batch['x'], static=batch.get('static', None), mask=batch['mask'])
             preds = head(embedding)
 
-            # Calculate loss
             if task == 'los':
                 loss = get_loss(preds.squeeze(), batch['labels'].float(), task)
             elif task == 'multiclass':
@@ -266,7 +247,7 @@ def adacare_train(args, train_dataset, val_dataset, test_dataset):
             else:
                 loss = get_loss(preds.squeeze(), batch['labels'].float(), task)
 
-            total_loss = loss # AdaCare returns 0 decov_loss
+            total_loss = loss
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -274,7 +255,6 @@ def adacare_train(args, train_dataset, val_dataset, test_dataset):
 
             train_loss_accum += total_loss.item() * batch['x'].shape[0]
 
-        # Validation
         model.eval()
         head.eval()
         preds_all = []
@@ -306,7 +286,6 @@ def adacare_train(args, train_dataset, val_dataset, test_dataset):
         preds = torch.cat(preds_all)
         labels = torch.cat(labels_all)
 
-        # Calculate metrics
         metrics = get_all_metrics(preds, labels, task, los_info={'los_std': 1.0, 'los_mean': 0.0})
 
         log(logger, f'Epoch {i}: Train Loss {train_loss_accum / len(train_dataset):.4f}, Val Loss {val_loss_accum / len(val_dataset):.4f}')
@@ -334,7 +313,6 @@ def adacare_train(args, train_dataset, val_dataset, test_dataset):
         if args.distributed:
             dist.barrier()
 
-    # Test with best model
     if args.distributed:
         dist.barrier()
 
@@ -347,15 +325,12 @@ if __name__ == "__main__":
 
     args = parse_args()
 
-    # Load data
     train_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_train.pkl', 'rb'))
     val_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_val.pkl', 'rb'))
     test_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_test.pkl', 'rb'))
 
     if getattr(args, 'toy_dataset', False):
         print("Using toy dataset...")
-        # Dictionary slicing for toy dataset
-        # data_smart is the key
         train_dataset = {'data_smart': train_dataset['data_smart'][:1600]}
         val_dataset = {'data_smart': val_dataset['data_smart'][:200]}
         test_dataset = {'data_smart': test_dataset['data_smart'][:200]}

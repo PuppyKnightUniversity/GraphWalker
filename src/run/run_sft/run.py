@@ -19,7 +19,6 @@ def run(args, train_dataset, val_dataset, test_dataset, logger):
         "--num_processes", nproc,
         "--mixed_precision", "fp16" if getattr(args, "sft_fp16", False) else "no",
     ]
-    # optional main process port to avoid conflicts when launching multiple trainings
     main_port = getattr(args, 'dist_main_port', None)
     if main_port is not None:
         cmd.extend(["--main_process_port", str(main_port)])
@@ -29,7 +28,6 @@ def run(args, train_dataset, val_dataset, test_dataset, logger):
         "--seed", str(args.seed),
     ])
 
-    # Forward essential LLM/SFT arguments to the training module
     def add_flag(name, value, is_bool=False):
         if is_bool:
             if bool(value):

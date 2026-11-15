@@ -1,6 +1,4 @@
-'''
-    Calculate the smart embedding for the train, val, and test dataset
-'''
+from run.run_smart.dims import resolve_smart_dims, validate_smart_checkpoint
 from torch.utils.data import DataLoader, Dataset, SequentialSampler
 from torch.nn.utils.rnn import pad_sequence
 import torch
@@ -39,59 +37,16 @@ def collate_fn(features: List[Dict[str, Any]]):
     return batch
 
 def remove_module_prefix(state_dict):
-    """
-    Remove 'module.' prefix from state_dict keys if present.
-    This is needed when loading models saved with DistributedDataParallel.
-    """
     new_state_dict = {}
     for k, v in state_dict.items():
         if k.startswith('module.'):
-            new_state_dict[k[7:]] = v  # Remove 'module.' prefix (7 characters)
+            new_state_dict[k[7:]] = v
         else:
             new_state_dict[k] = v
     return new_state_dict
 
 def calculate_smart_embedding(args, train_dataset, val_dataset, test_dataset):
-    """Compute frozen SMART embeddings and optional classifier logits for each split."""
-    if args.dataset == 'mimic3_mortality':
-        args.smart_input_dim = 17
-        args.smart_demo_dim = 0
-        args.smart_num_class = 2
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'mimic4_los':
-        args.smart_input_dim = 44
-        args.smart_demo_dim = 2
-        args.smart_num_class = 4
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'mimic4_mortality':
-        args.smart_input_dim = 44
-        args.smart_demo_dim = 2
-        args.smart_num_class = 2
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'mimic4_readmission':
-        args.smart_input_dim = 44
-        args.smart_demo_dim = 2
-        args.smart_num_class = 2
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'tjh_mortality':
-        args.smart_input_dim = 75
-        args.smart_demo_dim = 2
-        args.smart_num_class = 2
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'tjh_los':
-        args.smart_input_dim = 75
-        args.smart_demo_dim = 2
-        args.smart_num_class = 4
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'mimic3_los':
-        args.smart_input_dim = 17
-        args.smart_demo_dim = 0
-        args.smart_num_class = 4
-        args.smart_max_len = args.period_length
-        if not hasattr(args, 'smart_max_len') or args.smart_max_len is None:
-            args.smart_max_len = args.period_length
-    else:
-        raise ValueError(f"Dataset {args.dataset} not supported for SMART embedding calculation")        
+    resolve_smart_dims(args, (train_dataset, val_dataset, test_dataset))
 
     if getattr(args, 'ehr_protocol', None) == 'admission_daily':
         args.smart_max_len = max(sample['lens'] for split in (train_dataset, val_dataset, test_dataset)
@@ -124,7 +79,6 @@ def calculate_smart_embedding(args, train_dataset, val_dataset, test_dataset):
 
 
 def _encoder_cls_embedding(hidden):
-    """Concatenate the frozen encoder's feature-wise CLS tokens (no task head)."""
     return hidden[:, :, 0, :].reshape(hidden.shape[0], -1)
 
 
@@ -136,7 +90,6 @@ def _load_embedding_models(args, device):
         'random_few_shot_add_smart_logits_for_test_example',
         'graph_walker_add_smart_logits_for_test_example',
     ))
-    # SMART pretraining saves encoder/predictor/target_encoder, not classifier.
     explicit_path = getattr(args, 'embedding_model_path', None)
     filename = 'checkpoint-prc.pth' if logits_requested else 'checkpoint-mse.pth'
     checkpoint_path = explicit_path or os.path.join(args.smart_save_dir, filename)
@@ -146,6 +99,7 @@ def _load_embedding_models(args, device):
             'encoder with --embedding_model_path; logits ablations require a '
             'supervised checkpoint containing a classifier.')
     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
+    validate_smart_checkpoint(args, checkpoint, load_classifier=logits_requested)
     if 'classifier' in checkpoint and not logits_requested:
         raise ValueError('This checkpoint contains a supervised classifier. '
                          'Provide an encoder-only checkpoint, or enable the logits option.')
@@ -153,7 +107,6 @@ def _load_embedding_models(args, device):
     state = remove_module_prefix(checkpoint['encoder'])
     pos_key = 'position_enc.pos_table'
     if pos_key in state and state[pos_key].shape != encoder.position_enc.pos_table.shape:
-        # Positional encodings are deterministic, not learned weights.
         state[pos_key] = encoder.position_enc.pos_table
     encoder.load_state_dict(state, strict=True)
     encoder.requires_grad_(False).eval()

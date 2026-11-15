@@ -1,7 +1,3 @@
-# flake8: noqa
-"""
-Define arguments for scripts
-"""
 
 import argparse
 from pathlib import Path
@@ -10,15 +6,9 @@ from args.local_path_config import DATASET_PATH_MAP, LLM_PATH_MAP, EMBEDDING_MOD
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    '''
-        Seed Settings
-    '''
     parser.add_argument("--data_split_seed", type=int, default=3407, help="Patient split seed, independent of experiment seed")
     parser.add_argument("--seed", type=int, default=3407, help="Seed Settings")
 
-    '''
-        Dataset Settings
-    '''
     parser.add_argument("--dataset", type=str, default="mimic3_mortality", choices=['mimic3_mortality',
                                                                                     'mimic3_los',
                                                                                     'mimic4_mortality',
@@ -45,9 +35,6 @@ def parse_args():
     parser.add_argument("--train_ratio", type=float, default=0.8, help="Train ratio for the data")
     parser.add_argument("--unit", action="store_true", default=True, help="Whether to include unit information in the prompt")
     parser.add_argument("--reference_range", action="store_true", default=True, help="Whether to include reference range information in the prompt")
-    '''
-        Method Settings
-    '''
     parser.add_argument("--method", type=str, default="llm_zero_shot", choices=["llm_zero_shot",
                                                                                 "graph_walker",
                                                                                 "ehr_model_smart",
@@ -62,9 +49,6 @@ def parse_args():
     parser.add_argument("--classification_threshold", type=float, default=0.5, help="Binary F1 threshold fixed before test evaluation; choose on validation data only")
     parser.add_argument("--inference_type", type=str, default="only_answer", choices=["only_answer"], help="Inference type, only suitable for llm.")
     parser.add_argument("--force_recompute_prompt_wrapper", action="store_true", default=False, help="Force re-wrapping prompts and ignore cached mid_data")
-    '''
-        LLM Settings
-    '''
     parser.add_argument("--llm_name", type=str, default="qwen2-5-7b-instruct", choices=["qwen2-5-7b-instruct",
                                                                                         "qwen2-5-14b-instruct",
                                                                                         "qwen2-5-72b-instruct",
@@ -83,18 +67,12 @@ def parse_args():
     parser.add_argument("--llm_responses_save_path", type=str, default=None, help="Directory to save individual LLM responses for checkpoint support")
     parser.add_argument("--is_api", action="store_true", default=False, help="Whether to use API to inference")
 
-    '''
-        VLLM Settings
-    '''
     parser.add_argument("--use_vllm", action="store_true", default=False, help="Whether to use vllm to accelerate the inference")
     parser.add_argument("--vllm_max_model_len", type=int, default=16384, help="Maximum sequence length for vLLM (default: 16384). Can be increased if GPU memory allows (e.g., 32768, 65536)")
     parser.add_argument("--vllm_gpu_memory_utilization", type=float, default=0.85, help="GPU memory utilization ratio for vLLM (default: 0.85). Lower this if you increase max_model_len and encounter OOM")
     parser.add_argument("--vllm_batch_size", type=int, default=4, help="Batch size for vLLM (default: 4)")
     parser.add_argument("--vllm_enable_thinking", action="store_true", default=False, help="Enable thinking mode for qwen3 models (default: False). When enabled, the model will generate thinking tokens before the final answer")
     parser.add_argument("--vllm_apply_chat_template", action="store_true", default=True, help="Apply chat template to the prompt, if True, the prompt will be converted to a chat template format, otherwise, the prompt will be used as is")
-    '''
-        SFT Training Settings
-    '''
     parser.add_argument("--sft_max_seq_length", type=int, default=4096, help="Max sequence length for SFT")
     parser.add_argument("--sft_epochs", type=int, default=1, help="Training epochs for SFT")
     parser.add_argument("--sft_lr", type=float, default=1e-4, help="Learning rate for SFT")
@@ -112,15 +90,9 @@ def parse_args():
     parser.add_argument("--sft_gradient_checkpointing", action="store_true", default=True, help="Enable gradient checkpointing for SFT")
     parser.add_argument("--sft_deepspeed_zero3", action="store_true", default=True, help="Enable DeepSpeed ZeRO-3 for SFT")
     parser.add_argument("--sft_zero3_cpu_offload", action="store_true", default=False, help="Enable CPU offload for ZeRO-3")
-    '''
-        Embedding Model Settings
-    '''
     parser.add_argument("--embedding_model_name", type=str, default=None, choices=["smart", "qwen3-embedding-8b"], help="Embedding model to use, if None, the embedding model will not be used")
     parser.add_argument("--embedding_model_train_from_scratch", action="store_true", default=False, help="Whether to train the embedding model from scratch, if True, the embedding model will be trained from scratch, otherwise, the embedding model will be loaded from the checkpoint")
     parser.add_argument("--embedding_model_path", type=str, default=None, help="Embedding model path; for SMART, an explicit pretrained encoder checkpoint")
-    '''
-        Smart Model Settings
-    '''
     parser.add_argument('--smart_data_dropout', type=float, default=0.1)
     parser.add_argument('--smart_epochs', type=int, default=25)
     parser.add_argument('--smart_lr', type=float, default=1e-3)
@@ -134,27 +106,23 @@ def parse_args():
     parser.add_argument('--smart_max_mask_ratio', type=float, default=0.75)
     parser.add_argument('--smart_e_layers', type=int, default=2)
     parser.add_argument('--smart_n_heads', type=int, default=4)
-    parser.add_argument('--smart_input_dim', type=int, default=17)
-    parser.add_argument('--smart_demo_dim', type=int, default=0)
-    parser.add_argument('--smart_num_class', type=int, default=2)
+    parser.add_argument('--smart_input_dim', type=int, default=None,
+                        help='SMART feature dimension; inferred from the data if omitted')
+    parser.add_argument('--smart_demo_dim', type=int, default=None,
+                        help='Number of leading demographic columns; dataset default if omitted')
+    parser.add_argument('--smart_num_class', type=int, default=None,
+                        help='Number of output classes; inferred from the task if omitted')
     parser.add_argument('--smart_max_len', type=int, default=48)
     parser.add_argument('--smart_freeze_epochs', type=int, default=5)
     parser.add_argument("--smart_save_dir", type=str, default="../export/smart/", help="Save path for the checkpoints")
 
-    '''
-        Toy Dataset Settings
-    '''
     parser.add_argument('--toy_dataset', action="store_true", default=False, help="Whether to use toy dataset, if True, the dataset will be toy dataset, otherwise, the dataset will be the original dataset")
     parser.add_argument('--toy_dataset_size_train', type=int, default=1600, help="Toy dataset size for train")
     parser.add_argument('--toy_dataset_size_val', type=int, default=200, help="Toy dataset size for val")
     parser.add_argument('--toy_dataset_size_test', type=int, default=200, help="Toy dataset size for test")
     parser.add_argument('--dist_main_port', type=int, default=None, help="Distributed main process port for accelerate/deepspeed to avoid conflicts")
 
-    '''
-        ICL method Settings
-    '''
     parser.add_argument('--graph_walker_no_early_stop', action='store_true', help='Ablation: continue even if the best marginal gain is non-positive')
-    # For method graph_walker
     parser.add_argument('--graph_walker_neighbor_num', type=int, default=8, help="Graph walker neighbor number, when building the graph, each node will be connected to the top-k most similar nodes")
     parser.add_argument('--graph_walker_parallel_batch_size_for_cal_greedy_score', type=int, default=2, help="Parallel batch size for calculating greedy score")
     parser.add_argument('--graph_walker_test_topk', type=int, default=3, help="Graph walker test top-k, when we add the test patient to the graph, we will connect it to the top-k most similar nodes")
@@ -168,7 +136,6 @@ def parse_args():
     parser.add_argument('--graph_walker_add_smart_logits', action="store_true", default=False, help="Whether to add SMART model logits to the graph walker examples, if True, the SMART model logits will be added to the graph walker examples, otherwise, the SMART model logits will not be added to the graph walker examples")
     parser.add_argument('--graph_walker_add_smart_logits_for_test_example', action="store_true", default=False, help="Whether to add SMART model logits to the test example, if True, the SMART model logits will be added to the test example, otherwise, the SMART model logits will not be added to the test example")
 
-    # For conditional entropy computation
     parser.add_argument('--final_delta_H', action="store_true", default=False, help="Whether to compute average conditional entropy on test set")
 
     import sys
@@ -196,7 +163,6 @@ def parse_args():
         else:
             raise ValueError(f"No embedding model path mapping found for {embedding_model_key}")
 
-    # Assertion: if ICL examples don't have SMART logits, test example shouldn't have them either
     if not args.graph_walker_add_smart_logits and args.graph_walker_add_smart_logits_for_test_example:
         raise ValueError("Cannot add SMART logits to test example when ICL examples don't have SMART logits. Set --graph_walker_add_smart_logits to True if you want to add SMART logits to test example.")
 

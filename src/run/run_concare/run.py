@@ -28,7 +28,6 @@ def run_concare_train(args, logger):
         "-m", "run.run_concare.concare_train",
         "--dataset", args.dataset,
         "--seed", str(args.seed),
-        # Forward ConCare training options to the subprocess.
         "--concare_save_dir", args.concare_save_dir,
         "--concare_batch_size", str(args.concare_batch_size),
         "--concare_epochs", str(args.concare_epochs),
@@ -62,7 +61,6 @@ def run_concare_train(args, logger):
         sys.exit(1)
 
 def run(args, train_dataset, val_dataset, test_dataset, logger):
-    # The training subprocess loads its own datasets.
     run_concare_train(args, logger)
 
 if __name__ == "__main__":
@@ -71,7 +69,6 @@ if __name__ == "__main__":
 
     args = parse_args()
 
-    # Load cached datasets for direct module execution.
     train_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_train.pkl', 'rb'))
     val_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_val.pkl', 'rb'))
     test_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_test.pkl', 'rb'))

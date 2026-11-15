@@ -1,4 +1,3 @@
-"""Aggregate independent experiment runs, keeping bootstrap uncertainty separate."""
 import argparse
 import json
 import math

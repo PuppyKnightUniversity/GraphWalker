@@ -1,11 +1,9 @@
-"""Local vLLM inference and task-option likelihoods."""
 import gc
 import os
 from contextlib import nullcontext
 
 
 def score_classification_options(model, tokenizer, prompts, options, lora_request=None):
-    """Score every option at the same answer boundary, including non-top-k tokens."""
     import numpy as np
     from vllm import SamplingParams
 

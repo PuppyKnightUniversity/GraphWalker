@@ -8,7 +8,6 @@ def train_val_test_dataset_prompt_wrapper(args,
                                           test_dataset,
                                           is_few_shot: bool = False,
                                           max_tokens: int = 10000) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-    """Serialize records, select demonstrations, and build prediction prompts."""
     train_dataset, val_dataset, test_dataset = transform_ehr_to_detail_prompt(args, train_dataset, val_dataset, test_dataset)
 
     validate_detail_prompt_lengths(logger, train_dataset, val_dataset, test_dataset,
@@ -16,7 +15,6 @@ def train_val_test_dataset_prompt_wrapper(args,
     train_dataset, val_dataset, test_dataset = calculate_embeddings(
         args, train_dataset, val_dataset, test_dataset, logger)
 
-    # select ICL examples
     ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS = []
     if is_few_shot:
         from icl.select_icl_examples import FIND_ICL_EXAMPLES
@@ -28,7 +26,6 @@ def train_val_test_dataset_prompt_wrapper(args,
 
 
 def validate_detail_prompt_lengths(logger, *datasets, max_tokens=10000):
-    """Check the per-record budget without changing patient splits."""
     if max_tokens <= 0:
         raise ValueError('max_tokens must be positive')
     try:
@@ -62,7 +59,6 @@ def transform_ehr_to_detail_prompt(args, train_dataset, val_dataset, test_datase
 
 
 def calculate_embeddings(args, train_dataset, val_dataset, test_dataset, logger) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-    """Attach the selected encoder representations and optional expert logits."""
     if (
         args.method in ["llm_smart_embedding_topk"]
         or getattr(args, 'llm_smart_embedding_topk_add_smart_logits', False)
@@ -88,24 +84,20 @@ def calculate_embeddings(args, train_dataset, val_dataset, test_dataset, logger)
 def formulate_final_prompt_for_inference(args, logger, test_dataset, ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS, is_few_shot) -> Dict[str, Any]:
 
 
-    # For ablation study, determine whether to add SMART model logits
     if getattr(args, 'llm_smart_embedding_topk_add_smart_logits', False) or getattr(args, 'random_few_shot_add_smart_logits', False) or args.graph_walker_add_smart_logits or getattr(args, 'cone_add_smart_logits', False):
         add_smart_logits = True
     else:
         add_smart_logits = False
 
-    # For ablation study, determine whether to add SMART model logits to the test example
     if getattr(args, 'llm_smart_embedding_topk_add_smart_logits_for_test_example', False) or getattr(args, 'random_few_shot_add_smart_logits_for_test_example', False) or args.graph_walker_add_smart_logits_for_test_example:
         add_smart_logits_for_test_example = True
     else:
         add_smart_logits_for_test_example = False
 
-    # wrap prompt for test dataset
     prompt_all = []
     patient_num = len(test_dataset['detail'])
     progress = logger.create_progress("Processing test patients prompt wrapping", patient_num)
 
-    # wrap prompt for train/val/test dataset
     logger.processing_start("Prompt wrapping")
     if args.dataset == 'mimic3_mortality':
         from prompt.EHR_prompt.mimic3.mortality.prompt import mimic3_mortality_prompt_wrapper
@@ -127,17 +119,13 @@ def formulate_final_prompt_for_inference(args, logger, test_dataset, ICL_EXAMPLE
 
     with progress:
         task = progress.add_task("Processing test patients prompt wrapping", total=patient_num)
-        # Begin to wrap prompt for each patient
         for i in range(patient_num):
-            # build patient example
             patient_example = {}
             for key in test_dataset.keys():
                 patient_example[key] = test_dataset[key][i]
 
-            # extract ICL examples for the current test patient
             ICL_EXAMPLES_LIST = ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS[i] if is_few_shot else []
 
-            # select ICL examples
             prompt = prompt_wraper_func(patient_example,
                                         is_few_shot=is_few_shot,
                                         icl_examples_list=ICL_EXAMPLES_LIST,
@@ -151,13 +139,11 @@ def formulate_final_prompt_for_inference(args, logger, test_dataset, ICL_EXAMPLE
 
     test_dataset['data_prompt_fomat'] = prompt_all
 
-    # Save ICL examples list for conditional entropy computation
     if is_few_shot:
         test_dataset['ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS'] = ICL_EXAMPLES_LIST_FOR_ALL_TEST_PATIENTS
 
     logger.processing_complete("Processing test patients prompt wrapping")
 
-    # print example of prompt
     logger.show_message_example(test_dataset['data_prompt_fomat'][0], "Example Prompt")
 
     return test_dataset

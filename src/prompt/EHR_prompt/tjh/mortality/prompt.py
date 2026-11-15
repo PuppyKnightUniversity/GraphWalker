@@ -3,29 +3,16 @@ import numpy as np
 import torch
 
 def transform_tjh_mortality_ehr_to_detail_prompt(patient_example: Dict[str, Any]) -> str:
-    '''
-    Transform the ehr data into detail prompt for tjh mortality data
-    Args:
-        patient_example: Dict[str, Any]
-            The ehr data of a patient
-    Returns:
-        detail: str
-            The detail string of the ehr data
-    '''
     X = patient_example['X']
     header = patient_example['header']
     
-    # Convert to numpy array if not already
     if not isinstance(X, np.ndarray):
         X = np.array(X)
     
-    # Build detail lines for each feature
     detail_lines = []
     for fi, feature in enumerate(header):
-        # Extract values for this feature across all time steps
         values = []
         for val in X[:, fi]:
-            # Handle missing values: NaN, empty string, or None
             if isinstance(val, (int, float)) and np.isnan(val):
                 values.append('NaN')
             elif isinstance(val, str) and (val == '' or val.lower() == 'nan' or val == 'None'):
@@ -33,7 +20,6 @@ def transform_tjh_mortality_ehr_to_detail_prompt(patient_example: Dict[str, Any]
             elif val is None:
                 values.append('NaN')
             else:
-                # Convert to string, preserving the original value
                 values.append(str(val))
         detail_lines.append(f"- {feature}: [{', '.join(values)}]")
     

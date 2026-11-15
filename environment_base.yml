@@ -31,7 +31,6 @@ dependencies:
   - xz=5.6.4=h5eee18b_1
   - zlib=1.2.13=h5eee18b_1
   - pip:
-      # 第一批：基础小包（不占用太多内存）
       - aiofiles==24.1.0
       - aiohappyeyeballs==2.6.1
       - aiohttp==3.11.18

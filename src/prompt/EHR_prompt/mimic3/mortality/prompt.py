@@ -8,52 +8,13 @@ def transform_mimic3_mortality_ehr_to_detail_prompt(patient_example: Dict[str, A
                                                     reference_range: bool = False,
                                                     smooth_hourly_data: bool = True,
                                                     keep_last: bool = True) -> str:
-    '''
-    Transform the ehr data into detail prompt for mimic3 mortality data
-    Args:
-        patient_example: Dict[str, Any]
-            The ehr data of a patient
-        unit: bool
-            Whether to include unit in the detail
-        reference_range: bool
-            Whether to include reference range in the detail
-        smooth_hourly_data: bool
-            Whether to smooth the hourly data
-        keep_last: bool
-            Whether to keep the last data point of each hour
-    Returns:
-        detail: str
-            The detail string of the ehr data
-    '''
-    # predefine function1
     def format_EHR_detail(patient_data: np.ndarray, 
                           features: List[str], 
                           mask: np.ndarray,
                           unit: bool = False,
                           reference_range: bool = False,
                           dataset_name: str = 'mimic3_mortality') -> str:
-        '''
-        Format the ehr data into detail string, it will be called by prepare_prompt_for_patient_example
-
-        Args:
-            patient_data: np.ndarray
-                The ehr data of a patient, numeric data
-            features: List[str]
-                The features of the ehr data
-            mask: np.ndarray
-                The mask of the ehr data, 1 for missing value, 0 for non-missing value
-            unit: bool
-                Whether to include unit in the detail
-            reference_range: bool
-                Whether to include reference range in the detail
-            dataset_name: str
-                The name of the dataset
-        Returns:
-            detail: str
-                The detail string of the ehr data
-        '''
         feature_values = {}
-        # Define some categorical features with their possible values
         categorical_features_dict = {
             "Glascow coma scale eye opening": {
                 1: "No Response",
@@ -93,7 +54,6 @@ def transform_mimic3_mortality_ehr_to_detail_prompt(patient_example: Dict[str, A
                     else:
                         feature_values[feature].append(f"{value}")
             
-        # load unit and reference range
         import json
         from prompt.EHR_prompt.prompt_template import UNIT, REFERENCE_RANGE
         unit_values = dict(json.load(open(UNIT[dataset_name])))
@@ -113,18 +73,12 @@ def transform_mimic3_mortality_ehr_to_detail_prompt(patient_example: Dict[str, A
         
         return detail.strip()
 
-    # predefine function2
     def extract_leading_number(s):
-        '''
-        Extract the leading number from the string
-        '''
         s = str(s)
         match = re.match(r'^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)', s)
         if match:
             return match.group(1) 
         return np.nan 
-    # begin process patient example
-    # smooth patient data
     if smooth_hourly_data:
         from prompt.EHR_prompt.mimic3.utils import mimic3_smooth_hourly_data
         patient_example = mimic3_smooth_hourly_data(patient_example, keep_last=keep_last)
@@ -145,7 +99,6 @@ def transform_mimic3_mortality_ehr_to_detail_prompt(patient_example: Dict[str, A
     
     numeric_data[non_missing_indices] = cleaned_data_float
     
-    # fomulate detail EHR prompt for one patient
     detail = format_EHR_detail(numeric_data, 
                                feature_names, 
                                mask, unit=unit, 

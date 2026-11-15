@@ -9,18 +9,13 @@ import random
 from tqdm import tqdm
 
 def prepare_mimic3_mortality_extract_from_raw(args):
-    '''
-        Extract mimic3 mortality data from raw data
-    '''
     period_length = args.period_length
-    # Include period_length in cache file path to avoid cache conflicts
     raw_data_path = args.mid_data_dump_path + f'/mimic3_mortality/mimic3_mortality_raw_period{period_length}.pkl'
     if os.path.exists(raw_data_path):
         print('Loading mimic3 mortality data from directory: ', raw_data_path)
         patient_all = pickle.load(open(raw_data_path, 'rb'))
         return patient_all
     else:
-        # Read the benchmark train, validation and test listfiles.
         print('Extracting mimic3 mortality data from raw data path: ', args.dataset_path)
         path = args.dataset_path
         print(f"period_length: {period_length}")
@@ -34,24 +29,20 @@ def prepare_mimic3_mortality_extract_from_raw(args):
 
         from data.mimic3.reader import InHospitalMortalityReader, read_chunk
         for mode in ['train', 'val', 'test']:
-            # read data from raw mimic3 data
             reader = InHospitalMortalityReader(dataset_dir=os.path.join(path, 'train' if mode != 'test' else 'test'),
                     listfile=os.path.join(path, mode + '_listfile.csv'), period_length=period_length)
             N = reader.get_number_of_examples()
-            # read data in chunks to accelerate
             ret = read_chunk(reader, N)
             data = ret["X"]
             ts = ret["t"]
             labels = ret["y"]
             header = ret["header"]
             names = ret["name"]
-            # append all parts of data to one list
             patient_all['X'] += data
             patient_all['t'] += ts
             patient_all['y'] += labels
             patient_all['header'] += header
             patient_all['name'] += names
-        # dump the raw data
         if not os.path.exists(raw_data_path):
             os.makedirs(os.path.dirname(raw_data_path))
         pickle.dump(patient_all, open(raw_data_path, 'wb'))
@@ -59,17 +50,11 @@ def prepare_mimic3_mortality_extract_from_raw(args):
         return patient_all
 
 def prepare_mimic3_mortality_for_smart(args, patient_all):
-    '''
-    This function is to adapt the raw data for SMART model
-    '''
     period_length = args.period_length
-    # Include period_length in cache file path to avoid cache conflicts
     smart_data_path = args.mid_data_dump_path + f'/mimic3_mortality/mimic3_mortality_smart_period{period_length}.pkl'
     print('Adapting mimic3 mortality data for SMART model...')
-    # load channel info
     with open(args.channel_info_path) as f:
         series_channel_info = json.load(f)
-    # load discretizer config
     with open(args.discretizer_config_path) as f:
         series_config = json.load(f)
         id_to_channel = series_config['id_to_channel']
@@ -100,7 +85,6 @@ def prepare_mimic3_mortality_for_smart(args, patient_all):
             for index in range(len(row) - 1):
                 value = row[index + 1]
                 if value == '':
-                    # continue
                     if mask_patient[index, time] == 0 and time - last_time > 0:
                         if last_time >= 0:
                             data_patient[index, last_time + 1:time + 1] = data_patient[index, last_time]
@@ -126,7 +110,6 @@ def prepare_mimic3_mortality_for_smart(args, patient_all):
     mask_all = [mask.tolist() for mask in mask_all]
     label_all = patient_all['y']
     name_all = patient_all['name']
-    # NOTE: data_smart is a list of dicts, each dict corresponds to a patient
     x_len = [len(i) for i in data_normalized]
     for idx in range(len(patient_all['X'])):
         data_smart.append({

@@ -1,7 +1,19 @@
-"""Train-fitted scaling for masked time series."""
 import numpy as np
 
 from data.splits import patient_split_indices
+
+
+def processed_feature_header(values, lab_features=None):
+    values = np.asarray(values)
+    if values.ndim != 2 or not len(values) or values.shape[1] < 2:
+        raise ValueError('x_llm_ts must be a nonempty 2D matrix with leading Sex and Age columns')
+    count = values.shape[1] - 2
+    names = list(lab_features) if lab_features is not None else [f'labtest_features[{i}]' for i in range(count)]
+    if len(names) != count or any(not isinstance(name, str) or not name for name in names):
+        raise ValueError(f'labtest_features must contain {count} names matching x_llm_ts columns')
+    if len(set(names)) != len(names):
+        raise ValueError('labtest_features names must be unique')
+    return ['Sex', 'Age', *names]
 
 
 def standardize_smart_data(args, patient_all, values, masks, dataset):

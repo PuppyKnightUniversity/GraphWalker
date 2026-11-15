@@ -15,14 +15,6 @@ class API_LLM:
         self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
 
     def inference(self, prompt:str)->str:
-        """
-        Inference the LLMs with API with retry mechanism.
-        The prompt is a string.
-        Args:
-            prompt: the prompt.
-        Returns:
-            the response.
-        """
         for attempt in range(self.max_retries):
             try:
                 response = self.client.chat.completions.create(
@@ -34,33 +26,15 @@ class API_LLM:
             except Exception as e:
                 if attempt < self.max_retries - 1:
                     print(f"Attempt {attempt + 1} failed: {e}. Retrying...")
-                    time.sleep(1)  # 等待一秒后重试
+                    time.sleep(1)
                 else:
                     print(f"All {self.max_retries} attempts failed. Last error: {e}")
                     raise
 
 def inference(model_name:str, prompt_list:list, logger:EHRLogger, timeout: int = 100, max_retries: int = 3, save_path: str = None, labels: list = None)->list:
-    """
-    Inference the LLMs with API.
-    Args:
-        model_name: the name of the model.
-        prompt_list: the list of prompts.
-        timeout: maximum time (in seconds) to wait for a response. Default is 100 seconds.
-        max_retries: maximum number of retry attempts. Default is 3.
-        save_path: optional directory to create; responses are returned in memory.
-        labels: compatibility argument; unused by API inference.
-    Returns:
-        the list of responses.
-    """
 
-    # API configuration - Please configure your own API keys and URLs
-    # You can set these via environment variables or modify this section
-    # For security, it's recommended to use environment variables:
-    #   export QWEN_API_KEY="your_api_key"
-    #   export QWEN_BASE_URL="your_base_url"
 
     if model_name == 'qwen2-5-72b-instruct':
-        # Get from environment variables or use placeholder
         api_key = os.environ.get('QWEN_API_KEY', 'YOUR_API_KEY_HERE')
         base_url = os.environ.get('QWEN_BASE_URL', 'YOUR_BASE_URL_HERE')
         api_setting_model_name = 'qwen2.5:72b'
@@ -83,14 +57,12 @@ def inference(model_name:str, prompt_list:list, logger:EHRLogger, timeout: int =
     else:
         raise ValueError(f'Unsupported API model: {model_name}')
 
-    # Validate that API credentials are configured
     if api_key == 'YOUR_API_KEY_HERE' or base_url == 'YOUR_BASE_URL_HERE':
         raise ValueError(
             f'API credentials not configured for {model_name}. '
             f'Please set the appropriate environment variables or modify the API configuration in api_inference.py'
         )
 
-    # Prepare save directory if provided
     if save_path:
         os.makedirs(save_path, exist_ok=True)
 

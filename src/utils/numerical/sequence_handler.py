@@ -33,15 +33,6 @@ def unpad_batch(x, y, lens):
 
 
 def generate_mask(seq_lens):
-    """Generates a mask for the sequence.
-
-    Args:
-        seq_lens: [batch size]
-        (max_len: int)
-
-    Returns:
-        mask: [batch size, max_len]
-    """
     max_len = torch.max(seq_lens).to(seq_lens.device)
     mask = torch.arange(max_len).expand(len(seq_lens), max_len).to(seq_lens.device)
     mask = mask < seq_lens.unsqueeze(1)
@@ -55,10 +46,8 @@ def normalize_mask(mask, seq_len):
     if mask.dim() == 3:
         B, D1, D2 = mask.shape
         if D2 == seq_len:
-            # [B, F, T] -> Take [B, T]
             mask = mask[:, 0, :]
         elif D1 == seq_len:
-            # [B, T, F] -> Take [B, T]
             mask = mask[:, :, 0]
         elif D2 == 1:
              mask = mask.squeeze(-1)
@@ -73,19 +62,9 @@ def normalize_mask(mask, seq_len):
     return mask
 
 def get_last_visit(hidden_states, mask):
-    """Gets the last visit from the sequence model.
-
-    Args:
-        hidden_states: [batch size, seq len, hidden_size]
-        mask: [batch size, seq len]
-
-    Returns:
-        last_visit: [batch size, hidden_size]
-    """
     if mask is None:
         return hidden_states[:, -1, :]
     else:
-        # Normalize mask locally if not already done
         mask = normalize_mask(mask, hidden_states.shape[1])
              
         last_visit = torch.sum(mask, 1) - 1

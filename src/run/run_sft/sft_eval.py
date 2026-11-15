@@ -60,7 +60,6 @@ def _generate_responses(model, tokenizer, prompts, max_new_tokens=16):
 
 
 def _score_los_options(model, tokenizer, prompts):
-    """Normalize summed answer-token log-likelihoods over the four LOS labels."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
     model.eval()

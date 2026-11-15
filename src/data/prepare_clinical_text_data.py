@@ -5,11 +5,7 @@ import random
 from typing import List, Dict, Any
 
 def prepare_clinical_text_data_extract_from_raw(args, logger=None):
-    '''
-    Extract clinical text data from raw data
-    '''
     raw_data_path = args.mid_data_dump_path + f'/{args.dataset}/{args.dataset}_raw.pkl'
-    # CMB-Clin must read current case IDs, never an old question-only cache.
     if args.dataset != 'cmb_clin' and os.path.exists(raw_data_path):
         if logger:
             logger.info(f'Loading {args.dataset} data from directory: {raw_data_path}')
@@ -24,22 +20,17 @@ def prepare_clinical_text_data_extract_from_raw(args, logger=None):
             print(f'Extracting {args.dataset} data from raw data path: {args.dataset_path}')
         data_path = args.dataset_path + f'/{args.dataset}.jsonl'
         
-        # Initialize data dictionary
         data_all = {}
         
-        # Load JSONL file (each line is a JSON object)
         with open(data_path, 'r', encoding='utf-8') as f:
             lines = [line for line in f if line.strip()]
         
         records = [json.loads(line) for line in lines]
         if not records or any(not isinstance(item, dict) for item in records):
             raise ValueError('Clinical text JSONL must contain nonempty question objects')
-        # Keep fields present on any row so a missing first-row case ID cannot
-        # silently erase the grouping key for all subsequent rows.
         for key in dict.fromkeys(key for item in records for key in item):
             data_all[key] = [item.get(key) for item in records]
         
-        # Dump the raw data
         if not os.path.exists(os.path.dirname(raw_data_path)):
             os.makedirs(os.path.dirname(raw_data_path), exist_ok=True)
         pickle.dump(data_all, open(raw_data_path, 'wb'))
@@ -52,9 +43,6 @@ def prepare_clinical_text_data_extract_from_raw(args, logger=None):
         return data_all
 
 def prepare_clinical_text_data_train_val_test_split(args, data_all, logger=None):
-    '''
-    Split the data into train, val, and test sets
-    '''
     if args.dataset == 'cmb_clin':
         from data.cmb_clin_splits import split_cmb_clin
         return split_cmb_clin(args, data_all, logger)
@@ -64,7 +52,6 @@ def prepare_clinical_text_data_train_val_test_split(args, data_all, logger=None)
         val_data = pickle.load(open(split_data_path + f'/{args.dataset}_val.pkl', 'rb'))
         test_data = pickle.load(open(split_data_path + f'/{args.dataset}_test.pkl', 'rb'))
         
-        # Print sample sizes for loaded train/val/test sets
         first_key = list(train_data.keys())[0] if train_data else None
         if first_key:
             train_size = len(train_data[first_key])
@@ -92,12 +79,10 @@ def prepare_clinical_text_data_train_val_test_split(args, data_all, logger=None)
         if not os.path.exists(dump_path):
             os.makedirs(dump_path, exist_ok=True)
         
-        # Get the number of samples (using the first key as reference)
         first_key = list(data_all.keys())[0]
         num_samples = len(data_all[first_key])
         data_index = list(range(num_samples))
         
-        # Set random seed for reproducibility
         random.seed(args.seed)
         random.shuffle(data_index)
         
@@ -105,7 +90,6 @@ def prepare_clinical_text_data_train_val_test_split(args, data_all, logger=None)
         val_num = int(num_samples * ((1 - train_ratio) / 2))
         test_num = num_samples - train_num - val_num
         
-        # Split data
         train_data = {}
         for idx in data_index[:train_num]:
             for key in data_all.keys():
@@ -130,7 +114,6 @@ def prepare_clinical_text_data_train_val_test_split(args, data_all, logger=None)
                 test_data[key].append(data_all[key][idx])
         pickle.dump(test_data, open(dump_path + f'/{args.dataset}_test.pkl', 'wb'))
         
-        # Print sample sizes for train/val/test sets
         if logger:
             logger.info("Data split completed:")
             logger.info(f"  Train samples: {len(train_data[first_key])}")
@@ -152,16 +135,12 @@ def prepare_clinical_text_data(args, logger=None):
         logger = get_logger("Clinical-Text-DataPrep")
     assert args.dataset in ['cmb_exam_patient', 'cmb_clin', 'medqa'], f"Dataset {args.dataset} not supported in prepare_clinical_text_data"
     
-    # Basic clinical text data preparation and wrap prompt
     logger.data_preparation_start(args.dataset)
     
-    # Extract data from raw files
     data_all = prepare_clinical_text_data_extract_from_raw(args, logger)
     
-    # Split into train, val, test
     train_data, val_data, test_data = prepare_clinical_text_data_train_val_test_split(args, data_all, logger)
     
-    # Display data preparation completion
     first_key = list(train_data.keys())[0] if train_data else None
     if first_key:
         logger.data_preparation_complete(
@@ -170,7 +149,6 @@ def prepare_clinical_text_data(args, logger=None):
             len(test_data[first_key])
         )
     
-    # Toy dataset, for quick test
     if args.toy_dataset:
         logger.info("Using toy dataset for quick testing...")
         train_data = {key: value[:args.toy_dataset_size_train] for key, value in train_data.items()}

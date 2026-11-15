@@ -1,23 +1,18 @@
 #!/bin/bash
-# 分批安装 Python 包以避免内存不足问题
-# 使用方法: bash install_packages_batch.sh
 
-set -e  # 遇到错误立即退出
+set -e
 
 ENV_NAME="ehrbase"
 echo "开始分批安装包到环境: $ENV_NAME"
 
-# 激活 conda 环境
 eval "$(conda shell.bash hook)"
 conda activate $ENV_NAME
 
-# 检查环境是否激活
 if [ "$CONDA_DEFAULT_ENV" != "$ENV_NAME" ]; then
     echo "错误: 无法激活 conda 环境 $ENV_NAME"
     exit 1
 fi
 
-# 函数：安装一批包
 install_batch() {
     local batch_name=$1
     shift
@@ -29,7 +24,6 @@ install_batch() {
     echo "包数量: ${#packages[@]}"
     echo "=========================================="
     
-    # 构建 pip install 命令
     local install_cmd="pip install --no-cache-dir"
     for pkg in "${packages[@]}"; do
         install_cmd="$install_cmd $pkg"
@@ -43,12 +37,10 @@ install_batch() {
         exit 1
     fi
     
-    # 清理 pip 缓存以释放内存
     pip cache purge
     echo "已清理 pip 缓存"
 }
 
-# 第二批：PyTorch 核心包（需要先安装，其他包依赖它）
 echo ""
 echo "=========================================="
 echo "第二批：PyTorch 核心包"
@@ -58,7 +50,6 @@ install_batch "PyTorch核心包" \
     "torchvision==0.21.0" \
     "torchaudio==2.6.0"
 
-# 第三批：CUDA 相关包（大型二进制包）
 echo ""
 echo "=========================================="
 echo "第三批：CUDA 相关包"
@@ -80,7 +71,6 @@ install_batch "CUDA相关包" \
     "nvidia-nvjitlink-cu12==12.4.127" \
     "nvidia-nvtx-cu12==12.4.127"
 
-# 第四批：科学计算基础包
 echo ""
 echo "=========================================="
 echo "第四批：科学计算基础包"
@@ -91,32 +81,26 @@ install_batch "科学计算基础包" \
     "pandas==1.5.3" \
     "scikit-learn==1.6.1"
 
-# 第五批：编译密集型包（需要编译，占用内存）
 echo ""
 echo "=========================================="
 echo "第五批：编译密集型包（分批安装）"
 echo "=========================================="
 
-# 5.1: 先安装编译工具
 install_batch "编译工具" \
     "ninja==1.11.1.4"
 
-# 5.2: numba 和 llvmlite（需要编译）
 install_batch "Numba相关" \
     "llvmlite==0.44.0" \
     "numba==0.61.2"
 
-# 5.3: triton（需要编译，大型包）
 install_batch "Triton" \
     "triton==3.2.0"
 
-# 5.4: cupy（需要编译，非常占用内存）
 echo ""
 echo "警告: cupy 编译会占用大量内存，请确保有足够内存"
 install_batch "CuPy" \
     "cupy-cuda12x==13.4.1"
 
-# 第六批：深度学习框架核心包
 echo ""
 echo "=========================================="
 echo "第六批：深度学习框架核心包"
@@ -129,29 +113,24 @@ install_batch "深度学习框架核心" \
     "huggingface-hub==0.30.2" \
     "tiktoken==0.9.0"
 
-# 第七批：大型深度学习包（分批安装）
 echo ""
 echo "=========================================="
 echo "第七批：大型深度学习包"
 echo "=========================================="
 
-# 7.1: deepspeed（需要编译）
 echo ""
 echo "警告: deepspeed 编译会占用大量内存"
 install_batch "DeepSpeed" \
     "deepspeed==0.16.7"
 
-# 7.2: xformers（需要编译）
 install_batch "xformers" \
     "xformers==0.0.29.post2"
 
-# 7.3: vllm（大型包）
 echo ""
 echo "警告: vllm 安装会占用大量内存"
 install_batch "vLLM" \
     "vllm==0.8.5.post1"
 
-# 第八批：其他大型包
 echo ""
 echo "=========================================="
 echo "第八批：其他大型包"
@@ -166,7 +145,6 @@ install_batch "其他大型包" \
     "compressed-tensors==0.9.3" \
     "tensordict==0.10.0"
 
-# 第九批：音频和图像处理包
 echo ""
 echo "=========================================="
 echo "第九批：音频和图像处理包"
@@ -184,7 +162,6 @@ install_batch "音频图像处理" \
     "matplotlib==3.10.1" \
     "contourpy==1.3.2"
 
-# 第十批：Web 框架和 API
 echo ""
 echo "=========================================="
 echo "第十批：Web 框架和 API"
@@ -196,7 +173,6 @@ install_batch "Web框架" \
     "prometheus-client==0.22.0" \
     "prometheus-fastapi-instrumentator==7.1.0"
 
-# 第十一批：OpenTelemetry 相关
 echo ""
 echo "=========================================="
 echo "第十一批：OpenTelemetry 相关"
@@ -212,7 +188,6 @@ install_batch "OpenTelemetry" \
     "opentelemetry-semantic-conventions==0.47b0" \
     "opentelemetry-semantic-conventions-ai==0.4.9"
 
-# 第十二批：其他中型包
 echo ""
 echo "=========================================="
 echo "第十二批：其他中型包"
@@ -233,7 +208,6 @@ install_batch "其他中型包" \
     "psutil==7.0.0" \
     "pyzmq==26.4.0"
 
-# 第十三批：专业库
 echo ""
 echo "=========================================="
 echo "第十三批：专业库"
@@ -245,7 +219,6 @@ install_batch "专业库" \
     "leidenalg==0.11.0" \
     "pyhealth==1.1.6"
 
-# 第十四批：AI 和 LLM 相关
 echo ""
 echo "=========================================="
 echo "第十四批：AI 和 LLM 相关"
@@ -262,7 +235,6 @@ install_batch "AI和LLM相关" \
     "gguf==0.16.3" \
     "hf-xet==1.1.2"
 
-# 第十五批：工具和开发包
 echo ""
 echo "=========================================="
 echo "第十五批：工具和开发包"
@@ -277,7 +249,6 @@ install_batch "工具和开发包" \
     "jsonschema==4.23.0" \
     "safehttpx==0.1.6"
 
-# 完成
 echo ""
 echo "=========================================="
 echo "✓ 所有包安装完成！"

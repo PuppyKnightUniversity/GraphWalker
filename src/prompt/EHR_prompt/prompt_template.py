@@ -1,10 +1,6 @@
-"""Task instructions and shared historical-EHR prompt templates."""
 from pathlib import Path
 
 
-# Prompt wording is kept verbatim as used in the paper's experiments (Appendix F).
-# Here a "visit" is one observed calendar day within the admission; for ICU
-# readmission the input additionally includes the final day (see README).
 _MORTALITY_TASK = ("You are tasked with predicting whether the patient will die during the target visit, "
                    "using EHR records from preceding visits. The target visit is the patient's final visit, "
                    "and its records are excluded from the input.")

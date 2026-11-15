@@ -79,7 +79,6 @@ def test_empty_selected_set_uses_zero_shot_template():
 
 @pytest.mark.parametrize('dataset', ['mimic4_los', 'tjh_los'])
 def test_shared_los_template_preserves_original_task_description(dataset):
-    # These tasks expose the shared builder, without a separate inference wrapper.
     text = build_ehr_prompt(patient(dataset), dataset)
     assert ("You are tasked with predicting the patient's total hospital length of stay during the target "
             "visit, using EHR records from preceding visits. The target visit is the patient's final visit, "

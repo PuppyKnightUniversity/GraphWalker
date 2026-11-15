@@ -16,7 +16,6 @@ from typing import Any, Dict, List
 from models.concare import ConCare
 import torch.distributed as dist
 
-# Filter PyTorch DDP warnings
 warnings.filterwarnings("ignore", message="You passed find_unused_parameters=true to DistributedDataParallel")
 
 
@@ -69,7 +68,6 @@ def test(args, checkpoint_path, test_dataloader, logger, model, head, test_datas
             for key in batch:
                 batch[key] = batch[key].cuda()
 
-            # Forward pass
             embedding, decov_loss = model(batch['x'], mask=batch['mask'])
             preds = head(embedding)
 
@@ -79,7 +77,6 @@ def test(args, checkpoint_path, test_dataloader, logger, model, head, test_datas
     preds = torch.cat(preds_all)
     labels = torch.cat(labels_all)
 
-    # Determine task type
     if args.dataset in ['mimic3_los', 'mimic4_los', 'tjh_los']:
         if torch.is_floating_point(labels):
             task = 'los'
@@ -92,7 +89,6 @@ def test(args, checkpoint_path, test_dataloader, logger, model, head, test_datas
     else:
         raise ValueError(f"Unknown task for dataset {args.dataset}")
 
-    # Log prediction statistics
     if int(os.environ.get("LOCAL_RANK", 0)) == 0:
         log(logger, f"Prediction stats: min={preds.min():.4f}, max={preds.max():.4f}, mean={preds.mean():.4f}")
 
@@ -111,11 +107,7 @@ def test(args, checkpoint_path, test_dataloader, logger, model, head, test_datas
 
 def concare_train(args, train_dataset, val_dataset, test_dataset):
 
-    # initialize the logger, seed, distributed
-    # args.concare_save_dir is set in run.py or args
 
-    # Construct absolute path with dataset subdirectory
-    # Append the dataset name only when it is not already the final component.
     if not args.concare_save_dir.endswith(args.dataset):
         save_dir = os.path.abspath(os.path.join(args.concare_save_dir, args.dataset))
         args.concare_save_dir = save_dir
@@ -136,12 +128,9 @@ def concare_train(args, train_dataset, val_dataset, test_dataset):
     set_seed(args.seed)
     distributed_init(args)
 
-    # Infer input dimensions from dataset
     first_sample = train_dataset['data_smart'][0]
     if 'x' in first_sample:
-        # Check shape of x
         x_sample = first_sample['x']
-        # x is usually list of lists or numpy array [Time, Feat]
         if hasattr(x_sample, 'shape'):
             args.concare_lab_dim = x_sample.shape[-1]
         elif isinstance(x_sample, list) and len(x_sample) > 0:
@@ -158,13 +147,10 @@ def concare_train(args, train_dataset, val_dataset, test_dataset):
 
     log(logger, f"Inferred dimensions: lab_dim={args.concare_lab_dim}, demo_dim={args.concare_demo_dim}")
 
-    # Determine output dim
     if args.dataset in ['mimic3_los', 'mimic4_los', 'tjh_los']:
-        # Check if labels are classification (int) or regression (float)
         if 'labels' in first_sample:
             label_sample = first_sample['labels']
             if isinstance(label_sample, (int, np.integer)) or (hasattr(label_sample, 'dtype') and np.issubdtype(label_sample.dtype, np.integer)):
-                 # Infer the output size from at most 100 training labels.
                  max_label = 0
                  for i in range(min(100, len(train_dataset['data_smart']))):
                      lbl = train_dataset['data_smart'][i]['labels']
@@ -176,18 +162,17 @@ def concare_train(args, train_dataset, val_dataset, test_dataset):
                  output_dim = max_label + 1
                  task = 'multiclass'
             else:
-                 output_dim = 1 # Regression
+                 output_dim = 1
                  task = 'los'
         else:
              output_dim = 1
              task = 'los'
     else:
-        output_dim = 1 # Binary classification (sigmoid)
+        output_dim = 1
         task = 'mortality' if 'mortality' in args.dataset else 'readmission'
 
     log(logger, f"Task type: {task}, Output dim: {output_dim}")
 
-    # Load datasets
     train_dataset = CustomDataset(train_dataset['data_smart'])
     val_dataset = CustomDataset(val_dataset['data_smart'])
     test_dataset = CustomDataset(test_dataset['data_smart'])
@@ -207,7 +192,6 @@ def concare_train(args, train_dataset, val_dataset, test_dataset):
     val_dataloader = DataLoader(val_dataset, batch_size=args.concare_batch_size, sampler=val_sampler, collate_fn=collate_fn)
     test_dataloader = DataLoader(test_dataset, batch_size=args.concare_batch_size, sampler=test_sampler, collate_fn=collate_fn)
 
-    # Initialize Model
     model = ConCare(
         lab_dim=args.concare_lab_dim,
         demo_dim=args.concare_demo_dim,
@@ -228,11 +212,9 @@ def concare_train(args, train_dataset, val_dataset, test_dataset):
 
     optimizer = torch.optim.Adam(list(model.parameters()) + list(head.parameters()), lr=args.concare_lr)
 
-    # Training Loop
     best_metric_score = -float('inf') if task != 'los' else float('inf')
     best_metric_name = 'auprc' if task not in ['los', 'multiclass'] else ('mae' if task == 'los' else 'ma-ROC')
 
-    # LOS info for unnormalization if needed
     los_info = None
 
     for i in range(1, args.concare_epochs + 1):
@@ -247,11 +229,9 @@ def concare_train(args, train_dataset, val_dataset, test_dataset):
             embedding, decov_loss = model(batch['x'], mask=batch['mask'])
             preds = head(embedding)
 
-            # Calculate loss
             if task == 'los':
                 loss = get_loss(preds.squeeze(), batch['labels'].float(), task)
             elif task == 'multiclass':
-                # CrossEntropyLoss expects (N, C) preds and (N) long labels
                 criterion = nn.CrossEntropyLoss()
                 loss = criterion(preds, batch['labels'].long())
             else:
@@ -265,7 +245,6 @@ def concare_train(args, train_dataset, val_dataset, test_dataset):
 
             train_loss_accum += total_loss.item() * batch['x'].shape[0]
 
-        # Validation
         model.eval()
         head.eval()
         preds_all = []
@@ -297,7 +276,6 @@ def concare_train(args, train_dataset, val_dataset, test_dataset):
         preds = torch.cat(preds_all)
         labels = torch.cat(labels_all)
 
-        # Calculate metrics
         metrics = get_all_metrics(preds, labels, task, los_info={'los_std': 1.0, 'los_mean': 0.0})
 
         log(logger, f'Epoch {i}: Train Loss {train_loss_accum / len(train_dataset):.4f}, Val Loss {val_loss_accum / len(val_dataset):.4f}')
@@ -325,7 +303,6 @@ def concare_train(args, train_dataset, val_dataset, test_dataset):
         if args.distributed:
             dist.barrier()
 
-    # Test with best model
     if args.distributed:
         dist.barrier()
 
@@ -338,15 +315,12 @@ if __name__ == "__main__":
 
     args = parse_args()
 
-    # Load data
     train_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_train.pkl', 'rb'))
     val_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_val.pkl', 'rb'))
     test_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_test.pkl', 'rb'))
 
     if getattr(args, 'toy_dataset', False):
         print("Using toy dataset...")
-        # Dictionary slicing for toy dataset
-        # data_smart is the key
         train_dataset = {'data_smart': train_dataset['data_smart'][:1600]}
         val_dataset = {'data_smart': val_dataset['data_smart'][:200]}
         test_dataset = {'data_smart': test_dataset['data_smart'][:200]}

@@ -1,4 +1,3 @@
-"""CMB-Clin splits with exact question counts and indivisible clinical cases."""
 import hashlib
 import json
 import pickle
@@ -27,7 +26,6 @@ def _case_groups(data, field):
 
 
 def _allocate_cases(groups, sizes, seed):
-    """Exact two-dimensional subset allocation; never split a case to hit counts."""
     cases = sorted(groups)
     random.Random(seed).shuffle(cases)
     states = {(0, 0): ()}
@@ -76,11 +74,6 @@ def _validate_manifest(manifest, groups, sizes):
 
 
 def split_cmb_clin(args, data, logger=None):
-    """Create or reuse an explicit case assignment, independent of model seed.
-
-    Legacy row-wise pickle caches are never read. Recomputed splits and a JSON
-    case manifest are saved under a versioned, content-specific directory.
-    """
     field = getattr(args, 'clinical_case_id_field', 'case_id')
     groups, n = _case_groups(data, field)
     sizes = tuple(getattr(args, 'cmb_clin_split_sizes', (83, 42, 83)))
@@ -90,7 +83,6 @@ def split_cmb_clin(args, data, logger=None):
     manifest_path = getattr(args, 'cmb_clin_split_manifest', None)
     mapping = (json.loads(Path(manifest_path).read_text()) if manifest_path
                else _allocate_cases(groups, sizes, seed))
-    # Reusing an assignment must not relabel it with a different requested seed.
     assignment_seed = mapping.get('data_split_seed') if manifest_path and isinstance(mapping, dict) else seed
     mapping = _validate_manifest(mapping, groups, sizes)
     splits = []
@@ -114,10 +106,9 @@ def split_cmb_clin(args, data, logger=None):
 
 
 def main():
-    """Prepare splits without invoking the separate LLM inference entry point."""
     import argparse
     from data.prepare_clinical_text_data import prepare_clinical_text_data_extract_from_raw
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='CMB-Clin splits with exact question counts and indivisible clinical cases.')
     parser.add_argument('--dataset_path', required=True)
     parser.add_argument('--mid_data_dump_path', default='./mid_data')
     parser.add_argument('--clinical_case_id_field', default='case_id')

@@ -1,3 +1,4 @@
+from run.run_smart.dims import resolve_smart_dims, smart_checkpoint_config, validate_smart_checkpoint
 import os
 import json
 import copy
@@ -12,26 +13,22 @@ from typing import Any, Dict, List
 from models.smart import Encoder, EmbeddingDecoder
 import torch.distributed as dist
 
-# 屏蔽PyTorch DDP相关的警告
 warnings.filterwarnings("ignore", message="You passed find_unused_parameters=true to DistributedDataParallel")
 
 def random_masking(x, original_mask, min_mask_ratio, max_mask_ratio):
-    """
-    Perform per-sample random masking.
-    """
-    N, L, V = x.shape  # batch, length, var
+    N, L, V = x.shape
 
-    # Calculate mask ratios and lengths to keep for each sample in the batch
     mask_ratios = torch.rand(N, device=x.device) * \
         (max_mask_ratio - min_mask_ratio) + min_mask_ratio
     
     mask = torch.rand_like(x) < mask_ratios.view(-1, 1, 1)
-    x = x * (~mask)  # True for reconstruction, False for original
+    x = x * (~mask)
     return x, original_mask * (~mask),  original_mask * mask
 
 
 def test(args, checkpoint_path, test_dataloader, logger, encoder, predictor, target_encoder, criterion, test_dataset):
     checkpoint = torch.load(os.path.join(args.smart_save_dir, checkpoint_path))
+    validate_smart_checkpoint(args, checkpoint, load_classifier=False)
     save_epoch = checkpoint['epoch']
     log(logger, "last saved model is in epoch {}".format(save_epoch))
     encoder.load_state_dict(checkpoint['encoder'])
@@ -97,10 +94,9 @@ def collate_fn(features: List[Dict[str, Any]]):
     return batch
 
 def smart_pretrain(args, train_dataset, val_dataset, test_dataset):
+    resolve_smart_dims(args, (train_dataset, val_dataset, test_dataset))
 
-    # initialize the logger, seed, distributed
     save_dir = os.path.join(args.smart_save_dir, args.dataset, 'smart')
-    # 确保保存目录存在
     if args.local_rank == 0:
         os.makedirs(args.smart_save_dir, exist_ok=True)
     if args.local_rank == 0:
@@ -112,52 +108,7 @@ def smart_pretrain(args, train_dataset, val_dataset, test_dataset):
     set_seed(args.seed)
     distributed_init(args)
 
-    if args.dataset == 'mimic3_mortality':
-        args.smart_input_dim = 17
-        args.smart_demo_dim = 0
-        args.smart_num_class = 2
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'mimic3_los':
-        args.smart_input_dim = 17
-        args.smart_demo_dim = 0
-        args.smart_num_class = 4
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'mimic4_los':
-        args.smart_input_dim = 44
-        args.smart_demo_dim = 2
-        args.smart_num_class = 4
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'mimic4_mortality':
-        args.smart_input_dim = 44
-        args.smart_demo_dim = 2
-        args.smart_num_class = 2
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'mimic4_readmission':
-        args.smart_input_dim = 44
-        args.smart_demo_dim = 2
-        args.smart_num_class = 2
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'tjh_mortality':
-        args.smart_input_dim = 75
-        args.smart_demo_dim = 2
-        args.smart_num_class = 2
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    elif args.dataset == 'tjh_los':
-        args.smart_input_dim = 75
-        args.smart_demo_dim = 2
-        args.smart_num_class = 4
-        # Use period_length for smart_max_len to match the data time window
-        args.smart_max_len = args.period_length
-    else:
-        raise ValueError(f"Dataset {args.dataset} not supported")
 
-    # load the dataset 
     train_dataset = CustomDataset(train_dataset['data_smart'])
     val_dataset = CustomDataset(val_dataset['data_smart'])
     test_dataset = CustomDataset(test_dataset['data_smart'])
@@ -208,7 +159,7 @@ def smart_pretrain(args, train_dataset, val_dataset, test_dataset):
 
     best_auc = 0
     best_prc = 0
-    best_mse = 1
+    best_mse = float('inf')
     for i in range(1, args.smart_epochs + 1):
         train_loss = 0
         val_loss = 0
@@ -257,10 +208,10 @@ def smart_pretrain(args, train_dataset, val_dataset, test_dataset):
                     'encoder': encoder.state_dict(),
                     'predictor': predictor.state_dict(),
                     'target_encoder': target_encoder.state_dict(),
+                    'config': smart_checkpoint_config(args),
                     'epoch': i
                 }
                 log(logger, '----- Save best model - L1: %.4f -----' % cur_mse)
-                # 确保保存目录存在
                 os.makedirs(args.smart_save_dir, exist_ok=True)
                 torch.save(state, os.path.join(args.smart_save_dir, 'checkpoint-mse.pth'))
         if args.distributed:
@@ -275,13 +226,10 @@ if __name__ == "__main__":
     from args.ehrbase_args import parse_args
     args = parse_args()
 
-    # --- 分布式 rank 兼容处理 ---
-    # torchrun 提供的环境变量
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     rank = int(os.environ.get("RANK", 0))
     world_size = int(os.environ.get("WORLD_SIZE", 1))
 
-    # 旧代码里用到 local_rank / gpu / smart_local_rank
     if not hasattr(args, "local_rank"):
         args.local_rank = local_rank
     if not hasattr(args, "gpu"):
@@ -289,24 +237,20 @@ if __name__ == "__main__":
     if not hasattr(args, "smart_local_rank"):
         args.smart_local_rank = local_rank
 
-    # 旧代码里用到 rank / world_size
     if not hasattr(args, "rank"):
         args.rank = rank
     if not hasattr(args, "world_size"):
         args.world_size = world_size
-    # ---------------------------------
 
     train_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_train.pkl', 'rb'))
     val_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_val.pkl', 'rb'))
     test_dataset = pickle.load(open(args.mid_data_dump_path + f'/{args.dataset}/seed' + str(args.seed) + f'/{args.dataset}_test.pkl', 'rb'))
     
-    # Toy dataset, for quick test
     if getattr(args, 'toy_dataset', False):
         print("Using toy dataset for quick testing...")
         train_dataset = {key: value[:1600] for key, value in train_dataset.items()}
         val_dataset = {key: value[:200] for key, value in val_dataset.items()}
         test_dataset = {key: value[:200] for key, value in test_dataset.items()}
-        # Get dataset size for logging
         train_size = len(train_dataset.get('data_smart', train_dataset.get('X', [])))
         val_size = len(val_dataset.get('data_smart', val_dataset.get('X', [])))
         test_size = len(test_dataset.get('data_smart', test_dataset.get('X', [])))

@@ -1,4 +1,3 @@
-"""Outcome labels with explicit time units."""
 from datetime import datetime, timezone
 import math
 
@@ -18,7 +17,6 @@ def hospital_los_hours(admitted_at, discharged_at):
 
 
 def los_bin_from_hours(hours):
-    """Classify continuous LOS: <3, [3, 7], (7, 14], or >14 days."""
     hours = float(hours)
     if not math.isfinite(hours) or hours < 0:
         raise ValueError('LOS must be a finite, nonnegative duration in hours')
@@ -32,7 +30,6 @@ def los_bin_from_hours(hours):
 
 
 def hospital_los_label(record):
-    """Derive total hospital LOS from admission and discharge timestamps."""
     required = ('hospital_admitted_at', 'hospital_discharged_at')
     if not all(key in record for key in required):
         raise ValueError('LOS records require hospital_admitted_at and hospital_discharged_at')
@@ -40,7 +37,6 @@ def hospital_los_label(record):
 
 
 def icu_readmission_label(record):
-    """Read a binary ICU readmission outcome within 30 days of ICU discharge."""
     if 'icu_readmission_30d' in record:
         label = record['icu_readmission_30d']
     elif record.get('readmission_definition') == 'icu_30d':

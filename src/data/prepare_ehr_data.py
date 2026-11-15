@@ -1,4 +1,3 @@
-# flake8: noqa
 def prepare_ehr_data(args, logger=None):
     if logger is None:
         from utils.logger import get_logger
@@ -41,14 +40,16 @@ def prepare_ehr_data(args, logger=None):
     for split in (train_data, val_data, test_data):
         split.setdefault('data_protocol', [protocol] * len(split['X']))
 
-    # Display data preparation completion
+    if all('data_smart' in split for split in (train_data, val_data, test_data)):
+        from run.run_smart.dims import resolve_smart_dims
+        resolve_smart_dims(args, (train_data, val_data, test_data))
+
     logger.data_preparation_complete(
         len(train_data['X']), 
         len(val_data['X']), 
         len(test_data['X'])
     )
 
-    # Toy dataset, for quick test
     if args.toy_dataset:
         logger.info("Using toy dataset for quick testing...")
         train_data = {key: value[:args.toy_dataset_size_train] for key, value in train_data.items()}

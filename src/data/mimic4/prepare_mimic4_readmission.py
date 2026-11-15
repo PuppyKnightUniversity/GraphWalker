@@ -1,3 +1,4 @@
+from data.smart_preprocessing import processed_feature_header
 from data.splits import processed_patient_id
 from data.labels import icu_readmission_label
 import os
@@ -6,11 +7,7 @@ import numpy as np
 import random
 
 def prepare_mimic4_readmission_extract_from_raw(args):
-    '''
-    Extract mimic4 readmission data from raw data
-    '''
     period_length = args.period_length
-    # Include period_length in cache file path to avoid cache conflicts
     raw_data_path = args.mid_data_dump_path + f'/mimic4_readmission/mimic4_readmission_raw_v2_times_period{period_length}.pkl'
     base_path = os.path.join(args.dataset_path, 'processed', 'split')
     train_path = os.path.join(base_path, 'train_data.pkl')
@@ -29,15 +26,11 @@ def prepare_mimic4_readmission_extract_from_raw(args):
     if os.path.exists(lab_feat_path):
         try:
             lab_features = pickle.load(open(lab_feat_path, 'rb'))
-            if not isinstance(lab_features, (list, tuple)) or len(lab_features) != 17:
+            if not isinstance(lab_features, (list, tuple)) or len(lab_features) == 0:
                 lab_features = None
         except Exception:
             lab_features = None
 
-    def build_header(x_row: np.ndarray, lab_feats: list):
-        sex_str = 'Sex'
-        lab_headers = list(lab_feats) if lab_feats is not None else [f"labtest_features[{i}]" for i in range(17)]
-        return [sex_str, 'Age'] + lab_headers
 
     patient_all = {
         'X': [],
@@ -54,6 +47,9 @@ def prepare_mimic4_readmission_extract_from_raw(args):
     for split_name, data_list in [('train', train_list), ('val', val_list), ('test', test_list)]:
         for item in data_list:
             x = np.array(item['x_llm_ts'])
+            header = processed_feature_header(x, lab_features)
+            if patient_all['header'] and header != patient_all['header'][0]:
+                raise ValueError('LLM feature schema differs across samples')
             x_ts = np.array(item['x_ts'])
             if 'record_time' not in item:
                 raise ValueError("Processed MIMIC-IV records must provide record_time in hours")
@@ -63,15 +59,12 @@ def prepare_mimic4_readmission_extract_from_raw(args):
             subject_id = processed_patient_id(item, getattr(args, 'patient_id_field', None))
             missing_mask = item['missing_mask']
 
-            if x.ndim != 2 or x.shape[1] != 19:
-                continue
             if len(record_time) != x.shape[0]:
                 raise ValueError("record_time and x_llm_ts lengths differ")
 
-            header = build_header(x[0], lab_features)
 
-            patient_all['X'].append(x)  # for LLM
-            patient_all['X_ts'].append(x_ts)  # for ML model
+            patient_all['X'].append(x)
+            patient_all['X_ts'].append(x_ts)
             patient_all['t'].append(len(record_time))
             patient_all['record_time'].append(record_time)
             patient_all['y'].append(y)
@@ -80,7 +73,6 @@ def prepare_mimic4_readmission_extract_from_raw(args):
             patient_all['subject_id'].append(subject_id)
             patient_all['missing_mask'].append(missing_mask)
 
-    # dump the raw data
     if not os.path.exists(raw_data_path):
         os.makedirs(os.path.dirname(raw_data_path), exist_ok=True)
     pickle.dump(patient_all, open(raw_data_path, 'wb'))
@@ -88,70 +80,54 @@ def prepare_mimic4_readmission_extract_from_raw(args):
     return patient_all
 
 def prepare_mimic4_readmission_for_smart(args, patient_all):
-    """
-    将 mimic4_readmission 数据适配为 SMART 模型输入格式
-
-    注意维度对齐：
-    - smart_input_dim = 44 (特征维度)
-    - smart_demo_dim = 2 (人口统计学特征：Sex, Age)
-    - 数据格式：x 应该是 (time_steps, 44) 的 list of lists
-    """
     period_length = args.period_length
     smart_data_path = args.mid_data_dump_path + f'/mimic4_readmission/mimic4_readmission_smart_v2_times_period{period_length}.pkl'
     print('Adapting mimic4 readmission data for SMART model...')
 
-    # SMART 模型期望的输入维度
-    expected_input_dim = 44  # smart_input_dim for mimic4_readmission
+    expected_input_dim = getattr(args, 'smart_input_dim', None)
 
     data_smart = []
     for idx in range(len(patient_all['X'])):
         X_ts = patient_all['X_ts'][idx]
 
-        # 转换为 numpy array 以便检查维度
         if isinstance(X_ts, list):
             X_ts = np.array(X_ts)
 
-        # 维度检查和验证
-        if X_ts.ndim != 2:
+        if X_ts.ndim != 2 or not all(X_ts.shape):
             raise ValueError(f"X_ts[{idx}] 应该是 2D 数组，但得到形状: {X_ts.shape}")
 
         if np.isinf(X_ts).any():
             raise ValueError('SMART features cannot contain infinite values')
         time_steps, feature_dim = X_ts.shape
 
-        # 检查特征维度是否匹配
+        if expected_input_dim is None:
+            expected_input_dim = feature_dim
         if feature_dim != expected_input_dim:
             raise ValueError(
                 f"特征维度不匹配！期望 {expected_input_dim}，但得到 {feature_dim}。"
                 f"请检查 X_ts[{idx}] 的形状: {X_ts.shape}"
             )
 
-        # 根据 X_ts 生成对应的 mask
-        # 如果 X_ts 中有 NaN，则 mask 为 0，否则为 1
-        if X_ts.dtype.kind == 'f':  # 浮点类型，可能有 NaN
+        if X_ts.dtype.kind == 'f':
             mask = (~np.isnan(X_ts)).astype(int)
         else:
-            # 非浮点类型，假设所有值都是有效的
             mask = np.ones_like(X_ts, dtype=int)
 
-        # 转换为 list 格式（smart 的 collate_fn 期望 list）
         x_list = np.where(mask, X_ts, 0).tolist()
         mask_list = mask.tolist()
 
-        # 确保 mask 是整数类型（0 或 1）
         mask_list = [[int(m) for m in row] for row in mask_list]
 
         sample = {
-            'x': x_list,  # (time_steps, 44) 的 list of lists
+            'x': x_list,
             'labels': patient_all['y'][idx],
             'lens': time_steps,
-            'mask': mask_list,  # (time_steps, 44) 的 list of lists，与 x 形状一致
+            'mask': mask_list,
         }
         data_smart.append(sample)
 
     patient_all['data_smart'] = data_smart
 
-    # Ensure directory exists before dumping
     os.makedirs(os.path.dirname(smart_data_path), exist_ok=True)
     pickle.dump(patient_all, open(smart_data_path, 'wb'))
     print(f'Successfully adapted {len(data_smart)} samples for SMART model')

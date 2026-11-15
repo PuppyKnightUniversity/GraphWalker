@@ -1,4 +1,3 @@
-"""Shared chat serialization for generation and record likelihoods."""
 
 
 def format_model_prompt(args, tokenizer, prompt, target_span=None, enable_thinking=False):

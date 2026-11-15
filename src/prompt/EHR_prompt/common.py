@@ -1,9 +1,7 @@
-"""Shared EHR prompt metadata and task label formatting."""
 import numpy as np
 
 
 def format_icl_label(label, dataset):
-    """Render scalar NumPy/Torch labels as the task output, including LOS A-D."""
     if hasattr(label, 'item'):
         label = label.item()
     if dataset.endswith('_los'):
@@ -29,7 +27,6 @@ def measurement_times(patient, dataset):
 
 
 def serialize_patient_record(patient, dataset, unit=False, reference_range=False):
-    """Serialize observed measurements and their time/visit metadata."""
     times = measurement_times(patient, dataset)
     if dataset.startswith('mimic3_'):
         from prompt.EHR_prompt.mimic3.mortality.prompt import transform_mimic3_mortality_ehr_to_detail_prompt
@@ -74,7 +71,6 @@ def build_ehr_prompt(patient, dataset, examples=(), *, is_few_shot=None,
                      inference_type='only_answer', unit=False, reference_range=False,
                      add_smart_logits=False, add_smart_logits_for_test_example=False,
                      return_target_span=False):
-    """Build an outcome query and optionally return its target-record character span."""
     from prompt.EHR_prompt.prompt_template import (
         TASK_DESCRIPTION, RESPONSE_FORMAT_ONLY_ANSWER, USERPROMPT_ZERO_SHOT,
         USERPROMPT_FEW_SHOT, USERPROMPT_FEW_SHOT_SMART_WITH_LOGITS,

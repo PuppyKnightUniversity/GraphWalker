@@ -1,4 +1,3 @@
-# In this file, we realize the main inference function for LLMs.
 
 from utils.logger import get_logger
 
@@ -7,26 +6,13 @@ def llm_dataset_inference(args,
                           val_dataset, 
                           test_dataset, 
                           logger=None)->list:
-    """
-    Inference the LLMs with the dataset.
-    Args:
-        args: the arguments.
-        train_dataset: the train dataset.
-        val_dataset: the val dataset.
-        test_dataset: the test dataset.
-        logger: the logger instance for progress display (optional).
-    Returns:
-        the list of responses.
-    """
     if logger is None:
         logger = get_logger("LLM-Inference")
 
-    # llm inference
     logger.processing_start("LLM inference")
     if args.is_api:
         assert args.use_vllm is False
         from llms.api_inference import inference as api_inference
-        # Fetch labels only from 'y' if available in dataset
         if args.dataset in ['mimic3_mortality', 'mimic4_mortality', 'mimic3_los']:
             labels_list = test_dataset.get('y', None) if isinstance(test_dataset, dict) else None
         elif args.dataset in ['cmb_exam_patient']:
@@ -44,7 +30,6 @@ def llm_dataset_inference(args,
     else:
         if args.use_vllm:
             from llms.vllm_inference import inference as vllm_inference
-            # Fetch labels based on dataset type
             if args.dataset in ['mimic3_mortality', 'mimic4_mortality', 'mimic3_los']:
                 labels_list = test_dataset.get('y', None) if isinstance(test_dataset, dict) else None
             elif args.dataset in ['cmb_exam_patient']:
@@ -78,10 +63,8 @@ def llm_dataset_inference(args,
             raise ValueError("Local inference requires --use_vllm")
     logger.processing_complete("LLM inference")
 
-    # print example of LLM response
     logger.show_message_example(responses[0], "Example LLM Response")
     if logits is not None and len(logits) > 0:
-        # Convert logits dict to formatted string for display
         import json
         if isinstance(logits[0], dict):
             logits_str = json.dumps(logits[0], indent=2)
